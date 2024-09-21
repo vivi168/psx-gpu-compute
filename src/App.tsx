@@ -49,20 +49,14 @@ function App() {
   return (
     <>
       <form onSubmit={submit}>
-        <div>
+        <fieldset>
           <label htmlFor="gpustat">GPUSTAT</label>
           <input type="text" id="gpustat" placeholder="14802000" />
-        </div>
-        <div>
-          <label htmlFor="gpuCommands">
-            GPU Commands (hex words, newline separated)
-          </label>
+          <label htmlFor="gpuCommands">GPU Commands FIFO</label>
           <textarea id="gpuCommands" rows={5} placeholder="1337dead"></textarea>
-        </div>
-        <div>
           <label htmlFor="vramDump">VRAM dump</label>
           <input type="file" id="vramDump" />
-        </div>
+        </fieldset>
         <input type="submit" />
       </form>
 
