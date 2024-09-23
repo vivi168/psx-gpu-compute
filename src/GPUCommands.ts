@@ -46,13 +46,14 @@ export function BuildGP0CommandList(commandFIFO: number[]) {
     const textureBlending = textured && HasTextureBlending(word);
 
     let vertices: Vertex[] = [];
-    let clut: Point | undefined = undefined;
+    let clutPos: Point | undefined = undefined;
+    let texpageAttrs: TexPageAttributes | undefined = undefined;
 
     for (let i = 0; i < numVertices; i++) {
       const vertex: Vertex = {position: {x: 0, y: 0}};
 
       if (gouraud) {
-        if (i == 0) {
+        if (i === 0) {
           vertex.color = color;
         } else {
           word = commandFIFO.shift()!;
@@ -73,13 +74,27 @@ export function BuildGP0CommandList(commandFIFO: number[]) {
         const y = (uv >>> 8) & 0xff;
         vertex.uv = {x, y};
 
-        if (i == 0) {
+        if (i === 0) {
           const xy = (word >>> 16) & 0xffff;
           const x = (xy & 0b11111) * 16;
-          const y = (xy >>> 6) & 0x1ff;
-          clut = {x, y};
+          const y = (xy >>> 6) & 0x1ff; // note: on gpu gen2, y [0..1023]
+
+          clutPos = {x, y};
+        } else if (i === 1) {
+          const attrs = (word >>> 16) & 0xffff;
+          const baseX = (attrs & 0b1111) * 64;
+          const baseY = ((attrs >>> 4) & 1) * 256;
+          const transparencyMode = (attrs >>> 5) & 0b11;
+          const colorMode = (attrs >>> 7) & 0b11;
+          const textureDisable = (attrs & (1 << 11)) !== 0;
+
+          texpageAttrs = {
+            basePosition: {x: baseX, y: baseY},
+            transparencyMode,
+            colorMode,
+            textureDisable,
+          };
         }
-        // TODO: i == 1: texpage
       }
 
       vertices.push(vertex as Vertex);
@@ -93,7 +108,8 @@ export function BuildGP0CommandList(commandFIFO: number[]) {
       textured,
       opaque,
       textureBlending,
-      clut,
+      clutPos,
+      texpageAttrs,
     };
   };
 
@@ -180,6 +196,13 @@ interface FillRectCommand extends GP0Command {
   rect: Rect;
 }
 
+interface TexPageAttributes {
+  basePosition: Point;
+  transparencyMode: number;
+  colorMode: number;
+  textureDisable: boolean; // note: seems unused, gpu gen2 feature
+}
+
 interface RenderPolyCommand extends GP0Command {
   color: Color;
   vertices: Vertex[];
@@ -187,6 +210,6 @@ interface RenderPolyCommand extends GP0Command {
   opaque: boolean;
   textured: boolean;
   textureBlending: boolean;
-  clut?: Point;
-  // TODO: texpage
+  clutPos?: Point;
+  texpageAttrs?: TexPageAttributes;
 }
