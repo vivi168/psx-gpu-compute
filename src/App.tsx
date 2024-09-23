@@ -1,4 +1,5 @@
 import {useRef} from 'react';
+import {BuildGP0CommandList} from './GPUCommands';
 import './App.css';
 
 function App() {
@@ -52,7 +53,7 @@ function App() {
         <fieldset>
           <label htmlFor="gpustat">GPUSTAT</label>
           <input type="text" id="gpustat" placeholder="14802000" />
-          <label htmlFor="gpuCommands">GPU Commands FIFO</label>
+          <label htmlFor="gpuCommands">GPU GP0 Commands FIFO</label>
           <textarea id="gpuCommands" rows={5} placeholder="1337dead"></textarea>
           <label htmlFor="vramDump">VRAM dump</label>
           <input type="file" id="vramDump" />
@@ -67,10 +68,13 @@ function App() {
 }
 
 function Init(params: InitParams) {
-  const {vramBuf} = params;
+  const {gpuCommands, vramBuf} = params;
   const {vramViewerRef} = params.canvasRef;
 
   LoadVramToCanvas(vramBuf, vramViewerRef);
+
+  const commandList = BuildGP0CommandList(gpuCommands);
+  console.log(commandList);
 }
 
 function LoadVramToCanvas(
