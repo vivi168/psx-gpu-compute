@@ -131,7 +131,7 @@ export function BuildGP0CommandList(commandFIFO: number[]) {
             commandList.push(BuildFillRectCommand(word));
             break;
           default:
-            console.error('unknown command');
+            console.error(`unknown command ${word.toString(16)}`);
             break;
         }
         break;
