@@ -60,8 +60,10 @@ export function BuildGP0CommandList(commandFIFO: number[]) {
       }
 
       word = commandFIFO.shift()!;
-      vertex.position.x = word & 0xffff;
-      vertex.position.y = (word >>> 16) & 0xffff;
+      const x = word & 0xffff;
+      const y = (word >>> 16) & 0xffff;
+      vertex.position.x = new Int16Array([x])[0];
+      vertex.position.y = new Int16Array([y])[0];
 
       if (textured) {
         word = commandFIFO.shift()!;
