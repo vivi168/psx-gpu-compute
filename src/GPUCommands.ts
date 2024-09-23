@@ -46,6 +46,7 @@ export function BuildGP0CommandList(commandFIFO: number[]) {
     const textureBlending = textured && HasTextureBlending(word);
 
     let vertices: Vertex[] = [];
+    let clut: Point | undefined = undefined;
 
     for (let i = 0; i < numVertices; i++) {
       const vertex: Vertex = {position: {x: 0, y: 0}};
@@ -72,7 +73,12 @@ export function BuildGP0CommandList(commandFIFO: number[]) {
         const y = (uv >>> 8) & 0xff;
         vertex.uv = {x, y};
 
-        // TODO: i == 0: palette
+        if (i == 0) {
+          const xy = (word >>> 16) & 0xffff;
+          const x = (xy & 0b11111) * 16;
+          const y = (xy >>> 6) & 0x1ff;
+          clut = {x, y};
+        }
         // TODO: i == 1: texpage
       }
 
@@ -87,6 +93,7 @@ export function BuildGP0CommandList(commandFIFO: number[]) {
       textured,
       opaque,
       textureBlending,
+      clut,
     };
   };
 
@@ -180,6 +187,6 @@ interface RenderPolyCommand extends GP0Command {
   opaque: boolean;
   textured: boolean;
   textureBlending: boolean;
-  // TODO: clut
+  clut?: Point;
   // TODO: texpage
 }
