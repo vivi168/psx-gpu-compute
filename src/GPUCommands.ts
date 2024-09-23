@@ -35,6 +35,9 @@ export function BuildGP0CommandList(commandFIFO: number[]) {
     const IsOpaque = (word: number) => (word & (1 << 25)) === 0;
     const HasTextureBlending = (word: number) => (word & (1 << 24)) === 0;
 
+    const numVertices = NumVertices(word);
+    console.log('num vertices:', numVertices);
+
     const command = GetCommandCode(word);
     const color = GetColor(word);
     const gouraud = IsGouraudShaded(word);
@@ -44,7 +47,7 @@ export function BuildGP0CommandList(commandFIFO: number[]) {
 
     let vertices: Vertex[] = [];
 
-    for (let i = 0; i < NumVertices(word); i++) {
+    for (let i = 0; i < numVertices; i++) {
       const vertex: Vertex = {position: {x: 0, y: 0}};
 
       if (gouraud) {
