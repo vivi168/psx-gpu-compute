@@ -187,7 +187,7 @@ enum GP0CommandType {
   RenderingAttribute = 7,
 }
 
-interface GP0Command {
+export interface GP0Command {
   command: number;
 }
 

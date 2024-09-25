@@ -1,6 +1,7 @@
 import {useRef} from 'react';
 import {BuildGP0CommandList} from './GPUCommands';
 import './App.css';
+import GPUComputeRasterizer from './GPUComputeRasterizer';
 
 function App() {
   const vramViewerRef = useRef<HTMLCanvasElement>(null);
@@ -37,7 +38,7 @@ function App() {
     reader.onload = () => {
       const vramBuf = reader.result as ArrayBuffer;
 
-      Init({
+      Render({
         gpustat,
         gpuCommands,
         vramBuf,
@@ -67,14 +68,19 @@ function App() {
   );
 }
 
-function Init(params: InitParams) {
-  const {gpuCommands, vramBuf} = params;
-  const {vramViewerRef} = params.canvasRef;
+async function Render(params: InitParams) {
+  const {gpustat, gpuCommands, vramBuf} = params;
+  const {vramViewerRef, framebufferRef} = params.canvasRef;
 
   LoadVramToCanvas(vramBuf, vramViewerRef);
 
   const commandList = BuildGP0CommandList(gpuCommands);
   console.log(commandList);
+
+  const rasterizer = new GPUComputeRasterizer();
+  await rasterizer.Init(gpustat, commandList, vramBuf);
+
+  rasterizer.Render(framebufferRef);
 }
 
 function LoadVramToCanvas(
