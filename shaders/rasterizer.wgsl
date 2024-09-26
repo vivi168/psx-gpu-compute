@@ -36,14 +36,12 @@ fn barycentric_coords(v1: vec2f, v2: vec2f, v3: vec2f, p: vec2f) -> vec3f {
   return vec3f(1.0 - (u.x + u.y) / u.z, u.y / u.z, u.x / u.z);
 }
 
-// TODO: function to construct rgb555
-fn plot_pixel(x: u32, y: u32, r: u32, g: u32, b: u32) {
-    let i = (y * VRAM_WIDTH + x); // / 2u;
-    // let bi = i % 2;
+// TODO: function to construct zindex | rgba5551
+fn plot_pixel(x: u32, y: u32) {
+    let i = (y * VRAM_WIDTH + x);
 
     // newPixel = (zIndex << 16) | color
-    // TODO atomicMax(&vramBuffer16[i], newPixel);
-    atomicStore(&vramBuffer32[i], 0xff00ffff);
+    atomicMax(&vramBuffer32[i], 0x10007c1f);
 }
 
 fn draw_triangle(v1: vec2f, v2: vec2f, v3: vec2f) {
@@ -61,7 +59,7 @@ fn draw_triangle(v1: vec2f, v2: vec2f, v3: vec2f) {
                 continue;
             }
 
-            plot_pixel(x, y, 255u, 0u, 255u);
+            plot_pixel(x, y);
         }
     }
 }
@@ -84,9 +82,18 @@ fn rasterize(@builtin(global_invocation_id) gid: vec3u) {
 @compute @workgroup_size(256)
 fn init_vram(@builtin(global_invocation_id) gid: vec3u) {
     let idx = gid.x;
-    // TODO init zIndex of each cell to 0
-    // copy color from vramBuf16
-    // vramBuf16 only needed for init_vram_buf pass
 
-    atomicStore(&vramBuffer32[idx], 0);
+    let ri = idx / 2;
+    let bi = idx % 2;
+
+    let word = vramBuffer16[ri];
+    var byte = 0u;
+
+    if bi % 2 == 1 {
+        byte = (word >> 16) & 0xffff;
+    } else {
+        byte = word & 0xffff;
+    }
+
+    atomicStore(&vramBuffer32[idx], byte);
 }
