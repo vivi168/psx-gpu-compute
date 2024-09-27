@@ -23,7 +23,7 @@ struct CommandsListInfo {
 
 const VRAM_WIDTH: u32 = 1024;
 
-fn barycentric_coords(v1: vec2f, v2: vec2f, v3: vec2f, p: vec2f) -> vec3f {
+fn BarycentricCoords(v1: vec2f, v2: vec2f, v3: vec2f, p: vec2f) -> vec3f {
   let u = cross(
     vec3f(v3.x - v1.x, v2.x - v1.x, v1.x - p.x),
     vec3f(v3.y - v1.y, v2.y - v1.y, v1.y - p.y)
@@ -37,42 +37,42 @@ fn barycentric_coords(v1: vec2f, v2: vec2f, v3: vec2f, p: vec2f) -> vec3f {
 }
 
 // TODO: function to construct zindex | rgba5551
-fn plot_pixel(x: u32, y: u32) {
+fn PlotPixel(x: u32, y: u32) {
     let i = (y * VRAM_WIDTH + x);
 
     // newPixel = (zIndex << 16) | color
     atomicMax(&vramBuffer32[i], 0x10007c1f);
 }
 
-fn draw_triangle(v1: vec2f, v2: vec2f, v3: vec2f) {
+fn RasterTriangle(v1: vec2f, v2: vec2f, v3: vec2f) {
     let minX = u32(min(min(v1.x, v2.x), v3.x));
     let minY = u32(min(min(v1.y, v2.y), v3.y));
     let maxX = u32(max(max(v1.x, v2.x), v3.x));
     let maxY = u32(max(max(v1.y, v2.y), v3.y));
 
 
-    for (var y: u32 = minY; y < maxY; y = y + 1u) {
-        for (var x: u32 = minX; x < maxX; x = x + 1u) {
-            let bc = barycentric_coords(v1, v2, v3, vec2f(f32(x), f32(y)));
+    for (var y: u32 = minY; y < maxY; y = y + 1) {
+        for (var x: u32 = minX; x < maxX; x = x + 1) {
+            let bc = BarycentricCoords(v1, v2, v3, vec2f(f32(x), f32(y)));
 
             if bc.x < 0.0 || bc.y < 0.0 || bc.z < 0.0 {
                 continue;
             }
 
-            plot_pixel(x, y);
+            PlotPixel(x, y);
         }
     }
 }
 
 @compute @workgroup_size(256)
-fn rasterize(@builtin(global_invocation_id) gid: vec3u) {
+fn Rasterize(@builtin(global_invocation_id) gid: vec3u) {
     let idx = gid.x;
 
     if idx >= commandsListInfo.renderPolyCount {
         return;
     }
 
-    draw_triangle(
+    RasterTriangle(
         vec2f(463, 121),
         vec2f(673, 228),
         vec2f(486, 421)
@@ -80,7 +80,7 @@ fn rasterize(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 @compute @workgroup_size(256)
-fn init_vram(@builtin(global_invocation_id) gid: vec3u) {
+fn InitVram(@builtin(global_invocation_id) gid: vec3u) {
     let idx = gid.x;
 
     let ri = idx / 2;

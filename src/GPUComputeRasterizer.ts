@@ -226,7 +226,7 @@ class GPUComputeRasterizer {
       layout: pipelineLayout,
       compute: {
         module,
-        entryPoint: 'init_vram',
+        entryPoint: 'InitVram',
       },
     });
 
@@ -235,7 +235,7 @@ class GPUComputeRasterizer {
       layout: pipelineLayout,
       compute: {
         module,
-        entryPoint: 'rasterize',
+        entryPoint: 'Rasterize',
       },
     });
 

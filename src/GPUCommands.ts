@@ -45,7 +45,7 @@ export function BuildGP0CommandList(commandFIFO: number[]) {
     const textured = IsTextured(word);
     const textureBlending = textured && HasTextureBlending(word);
 
-    let vertices: Vertex[] = [];
+    const vertices: Vertex[] = [];
     let clutPos: Point | undefined = undefined;
     let texpageAttrs: TexPageAttributes | undefined = undefined;
 
