@@ -84,8 +84,6 @@ class GPUComputeRasterizer {
 
     // TODO: from gputstat info, only draw dispenv portion
     const onscreenCanvas = canvasRef.current!;
-    onscreenCanvas.width = VRAM_WIDTH;
-    onscreenCanvas.height = VRAM_HEIGHT;
     const onscreenCtx = onscreenCanvas.getContext('2d')!;
 
     onscreenCtx.drawImage(this.canvas, 0, 0);
