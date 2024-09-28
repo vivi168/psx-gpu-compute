@@ -24,16 +24,16 @@ struct CommandsListInfo {
 const VRAM_WIDTH: u32 = 1024;
 
 fn BarycentricCoords(v1: vec2f, v2: vec2f, v3: vec2f, p: vec2f) -> vec3f {
-  let u = cross(
-    vec3f(v3.x - v1.x, v2.x - v1.x, v1.x - p.x),
-    vec3f(v3.y - v1.y, v2.y - v1.y, v1.y - p.y)
-  );
+    let u = cross(
+        vec3f(v3.x - v1.x, v2.x - v1.x, v1.x - p.x),
+        vec3f(v3.y - v1.y, v2.y - v1.y, v1.y - p.y)
+    );
 
-  if abs(u.z) < 1.0 {
-    return vec3f(-1.0, 1.0, 1.0);
-  }
+    if abs(u.z) < 1.0 {
+        return vec3f(-1.0, 1.0, 1.0);
+    }
 
-  return vec3f(1.0 - (u.x + u.y) / u.z, u.y / u.z, u.x / u.z);
+    return vec3f(1.0 - (u.x + u.y) / u.z, u.y / u.z, u.x / u.z);
 }
 
 // TODO: function to construct zindex | rgba5551
