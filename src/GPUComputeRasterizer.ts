@@ -44,18 +44,28 @@ class GPUComputeRasterizer {
 
     // ====
 
-    // TODO: one pass per primitive type
-    const rasterizePass = encoder.beginComputePass({
-      label: 'rasterize pass',
+    const fillRectPass = encoder.beginComputePass({
+      label: 'fill rect pass',
     });
 
-    rasterizePass.setPipeline(this.rasterizerPipeline!);
-    rasterizePass.setBindGroup(0, this.rasterizerBindGroup!);
-    rasterizePass.dispatchWorkgroups(1); // TODO: commands.length / sizeof(command) / 256
+    fillRectPass.setPipeline(this.fillRectPipeline!);
+    fillRectPass.setBindGroup(0, this.rasterizerBindGroup!);
+    fillRectPass.dispatchWorkgroups(1);
+    fillRectPass.end();
+
+    // ====
+
+    const renderPolyPass = encoder.beginComputePass({
+      label: 'render polygon pass',
+    });
+
+    renderPolyPass.setPipeline(this.renderPolyPipeline!);
+    renderPolyPass.setBindGroup(0, this.rasterizerBindGroup!);
+    renderPolyPass.dispatchWorkgroups(1); // TODO: commands.length / sizeof(command) / 256
     // todo: one pass for fill rect, one pass for poly, one pass for line, one pass for rect
     // todo: one pass to clear zbuffer
 
-    rasterizePass.end();
+    renderPolyPass.end();
 
     // ====
 
@@ -228,12 +238,21 @@ class GPUComputeRasterizer {
       },
     });
 
-    this.rasterizerPipeline = this.device!.createComputePipeline({
-      label: 'rasterizer pipeline',
+    this.fillRectPipeline = this.device!.createComputePipeline({
+      label: 'fill rect pipeline',
       layout: pipelineLayout,
       compute: {
         module,
-        entryPoint: 'Rasterize',
+        entryPoint: 'FillRect',
+      },
+    });
+
+    this.renderPolyPipeline = this.device!.createComputePipeline({
+      label: 'render polygon pipeline',
+      layout: pipelineLayout,
+      compute: {
+        module,
+        entryPoint: 'RenderPoly',
       },
     });
 
@@ -329,7 +348,8 @@ class GPUComputeRasterizer {
 
   private device?: GPUDevice;
   private initVramPipeline?: GPUComputePipeline;
-  private rasterizerPipeline?: GPUComputePipeline;
+  private fillRectPipeline?: GPUComputePipeline;
+  private renderPolyPipeline?: GPUComputePipeline;
   private rendererPipeline?: GPURenderPipeline;
 
   private gpustatBuffer?: GPUBuffer;

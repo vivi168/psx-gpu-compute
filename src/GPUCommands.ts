@@ -12,12 +12,12 @@ export function BuildGP0CommandList(commandFIFO: number[]) {
     const color = GetColor(word);
 
     word = commandFIFO.shift()!;
-    const x = word & 0xffff;
-    const y = (word >>> 16) & 0xffff;
+    const x = (word & 0x3f) * 16;
+    const y = (word >>> 16) & 0x1ff;
 
     word = commandFIFO.shift()!;
-    const width = word & 0xffff;
-    const height = (word >>> 16) & 0xffff;
+    const width = ((word & 0x3ff) + 0xf) & ~0xf;
+    const height = (word >>> 16) & 0x1ff;
 
     return {
       command,
@@ -151,9 +151,9 @@ interface Color {
 }
 
 function GetColor(c: number): Color {
-  const r = c & 0xff;
-  const g = (c >>> 8) & 0xff;
-  const b = (c >>> 16) & 0xff;
+  const r = (c & 0xff) / 255;
+  const g = ((c >>> 8) & 0xff) / 255;
+  const b = ((c >>> 16) & 0xff) / 255;
 
   return {r, g, b};
 }
