@@ -1,6 +1,6 @@
-import {GP0Command} from './GPUCommands';
 import computeShaderWGSL from '../shaders/rasterizer.wgsl?raw';
 import rendererShaderWGSL from '../shaders/renderer.wgsl?raw';
+import {GP0CommandLists} from '../gpu-commands/pkg/gpu_commands';
 
 const VRAM_WIDTH = 1024;
 const VRAM_HEIGHT = 512;
@@ -10,9 +10,20 @@ class GPUComputeRasterizer {
   constructor() {
     this.canvas = new OffscreenCanvas(VRAM_WIDTH, VRAM_HEIGHT);
     this.ctx = this.canvas.getContext('webgpu')!;
+
+    this.commandListsInfo = {
+      fillRectCount: 0,
+      renderPolyCount: 0,
+      renderLineCount: 0,
+      renderRectCount: 0,
+    };
   }
 
-  async Init(gpustat: number, gp0Commands: GP0Command[], vramBuf: ArrayBuffer) {
+  async Init(
+    gpustat: number,
+    gp0CommandLists: GP0CommandLists,
+    vramBuf: ArrayBuffer
+  ) {
     const adapter = await navigator.gpu?.requestAdapter();
     const device = await adapter?.requestDevice();
 
@@ -22,7 +33,21 @@ class GPUComputeRasterizer {
 
     this.device = device;
 
-    this.InitBuffers(gpustat, gp0Commands, vramBuf);
+    const fillRectCount =
+      gp0CommandLists.FillRectCommandCount /
+      gp0CommandLists.FillRectCommandSize;
+    const renderPolyCount =
+      gp0CommandLists.RenderPolyCommandCount /
+      gp0CommandLists.RenderPolyCommandSize;
+
+    this.commandListsInfo = {
+      fillRectCount,
+      renderPolyCount,
+      renderLineCount: 0,
+      renderRectCount: 0,
+    };
+
+    this.InitBuffers(gpustat, gp0CommandLists, vramBuf);
     this.InitComputeResources();
     this.InitRenderResources();
   }
@@ -44,28 +69,31 @@ class GPUComputeRasterizer {
 
     // ====
 
-    const fillRectPass = encoder.beginComputePass({
-      label: 'fill rect pass',
-    });
+    if (this.commandListsInfo.fillRectCount > 0) {
+      const fillRectPass = encoder.beginComputePass({
+        label: 'fill rect pass',
+      });
 
-    fillRectPass.setPipeline(this.fillRectPipeline!);
-    fillRectPass.setBindGroup(0, this.rasterizerBindGroup!);
-    fillRectPass.dispatchWorkgroups(1);
-    fillRectPass.end();
+      fillRectPass.setPipeline(this.fillRectPipeline!);
+      fillRectPass.setBindGroup(0, this.rasterizerBindGroup!);
+      fillRectPass.dispatchWorkgroups(this.commandListsInfo.fillRectCount);
+      fillRectPass.end();
+    }
 
     // ====
 
-    const renderPolyPass = encoder.beginComputePass({
-      label: 'render polygon pass',
-    });
+    if (this.commandListsInfo.renderPolyCount > 0) {
+      const renderPolyPass = encoder.beginComputePass({
+        label: 'render polygon pass',
+      });
 
-    renderPolyPass.setPipeline(this.renderPolyPipeline!);
-    renderPolyPass.setBindGroup(0, this.rasterizerBindGroup!);
-    renderPolyPass.dispatchWorkgroups(1); // TODO: commands.length / sizeof(command) / 256
-    // todo: one pass for fill rect, one pass for poly, one pass for line, one pass for rect
-    // todo: one pass to clear zbuffer
-
-    renderPolyPass.end();
+      renderPolyPass.setPipeline(this.renderPolyPipeline!);
+      renderPolyPass.setBindGroup(0, this.rasterizerBindGroup!);
+      renderPolyPass.dispatchWorkgroups(
+        Math.ceil(this.commandListsInfo.renderPolyCount / 256)
+      );
+      renderPolyPass.end();
+    }
 
     // ====
 
@@ -101,11 +129,10 @@ class GPUComputeRasterizer {
 
   private InitBuffers(
     gpustat: number,
-    gp0Commands: GP0Command[],
+    gp0CommandLists: GP0CommandLists,
     vramBuf: ArrayBuffer
   ) {
     const gpustatArray = this.BuildGpustatArray(gpustat);
-    const gp0CommandsArray = this.BuildGP0CommandsArray(gp0Commands);
     const vramBuf16Array = new Uint32Array(vramBuf);
 
     // ====
@@ -121,41 +148,70 @@ class GPUComputeRasterizer {
 
     // ====
 
-    // TODO struct on wgsl side
-    // contains the size of each commands
-    const commandsListInfo = new Uint32Array([1, 1, 1, 1]);
+    const commandsListInfo = Uint32Array.from(
+      Object.values(this.commandListsInfo)
+    );
 
-    this.commandsListInfoBuffer = this.device!.createBuffer({
+    this.commandListsInfoBuffer = this.device!.createBuffer({
       label: 'commands list info uniforms buffer',
       size: commandsListInfo.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     this.device!.queue.writeBuffer(
-      this.commandsListInfoBuffer,
+      this.commandListsInfoBuffer,
       0,
       commandsListInfo
     );
 
     // ====
 
-    this.gp0CommandsBuffer = this.device!.createBuffer({
-      label: 'gp0 commands uniforms buffer',
-      size: gp0CommandsArray.byteLength,
+    // FIXME: filthy hack
+    const fillRectCommandsArray =
+      this.commandListsInfo.fillRectCount > 0
+        ? gp0CommandLists.FillRectCommands
+        : new Uint8Array(gp0CommandLists.FillRectCommandSize);
+    console.log(fillRectCommandsArray);
+
+    this.fillRectCommandsBuffer = this.device!.createBuffer({
+      label: 'gp0 fill rect commands storage buffer',
+      size: fillRectCommandsArray.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
-    this.device!.queue.writeBuffer(this.gp0CommandsBuffer, 0, gp0CommandsArray);
+    this.device!.queue.writeBuffer(
+      this.fillRectCommandsBuffer,
+      0,
+      fillRectCommandsArray
+    );
+
+    // ====
+
+    // FIXME: filthy hack
+    const renderPolyCommandsArray =
+      this.commandListsInfo.renderPolyCount > 0
+        ? gp0CommandLists.RenderPolyCommands
+        : new Uint8Array(gp0CommandLists.RenderPolyCommandSize);
+    console.log(renderPolyCommandsArray);
+
+    this.renderPolyCommandsBuffer = this.device!.createBuffer({
+      label: 'gp0 render poly commands storage buffer',
+      size: renderPolyCommandsArray.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    this.device!.queue.writeBuffer(
+      this.renderPolyCommandsBuffer,
+      0,
+      renderPolyCommandsArray
+    );
 
     // ====
 
     this.vramBuffer16 = this.device!.createBuffer({
       label: 'vram 16 buffer',
       size: vramBuf16Array.byteLength,
-      usage:
-        GPUBufferUsage.STORAGE |
-        GPUBufferUsage.COPY_SRC |
-        GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
     this.device!.queue.writeBuffer(this.vramBuffer16, 0, vramBuf16Array);
@@ -165,10 +221,7 @@ class GPUComputeRasterizer {
     this.vramBuffer32 = this.device!.createBuffer({
       label: 'vram 32 buffer',
       size: Uint32Array.BYTES_PER_ELEMENT * VRAM_SIZE,
-      usage:
-        GPUBufferUsage.STORAGE |
-        GPUBufferUsage.COPY_SRC |
-        GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
   }
 
@@ -176,15 +229,6 @@ class GPUComputeRasterizer {
     // TODO: GPUStat class helper + struct of u32 instead of raw bitfield?
 
     return new Uint32Array([gpustat]);
-  }
-
-  private BuildGP0CommandsArray(gp0Commands: GP0Command[]) {
-    // TODO: also include the z-index
-    for (const command of gp0Commands) {
-      console.log(command);
-    }
-
-    return new Uint32Array([1, 0, 0xff00ffff]);
   }
 
   private InitComputeResources() {
@@ -204,22 +248,27 @@ class GPUComputeRasterizer {
         {
           binding: 1,
           visibility: GPUShaderStage.COMPUTE,
-          buffer: {}, // commands list info uniforms buffer
+          buffer: {type: 'read-only-storage'}, // vram16 buffer storage buffer
         },
         {
           binding: 2,
           visibility: GPUShaderStage.COMPUTE,
-          buffer: {type: 'read-only-storage'}, // gp0 commands storage buffer
+          buffer: {type: 'storage'}, // vram32 buffer storage buffer
         },
         {
           binding: 3,
           visibility: GPUShaderStage.COMPUTE,
-          buffer: {type: 'read-only-storage'}, // vram16 buffer storage buffer
+          buffer: {}, // commands lists info uniforms buffer
         },
         {
           binding: 4,
           visibility: GPUShaderStage.COMPUTE,
-          buffer: {type: 'storage'}, // vram32 buffer storage buffer
+          buffer: {type: 'read-only-storage'}, // gp0 fill rect commands storage buffer
+        },
+        {
+          binding: 5,
+          visibility: GPUShaderStage.COMPUTE,
+          buffer: {type: 'read-only-storage'}, // gp0 render poly commands storage buffer
         },
       ],
     });
@@ -266,19 +315,23 @@ class GPUComputeRasterizer {
         },
         {
           binding: 1,
-          resource: {buffer: this.commandsListInfoBuffer!},
-        },
-        {
-          binding: 2,
-          resource: {buffer: this.gp0CommandsBuffer!},
-        },
-        {
-          binding: 3,
           resource: {buffer: this.vramBuffer16!},
         },
         {
-          binding: 4,
+          binding: 2,
           resource: {buffer: this.vramBuffer32!},
+        },
+        {
+          binding: 3,
+          resource: {buffer: this.commandListsInfoBuffer!},
+        },
+        {
+          binding: 4,
+          resource: {buffer: this.fillRectCommandsBuffer!},
+        },
+        {
+          binding: 5,
+          resource: {buffer: this.renderPolyCommandsBuffer!},
         },
       ],
     });
@@ -353,13 +406,24 @@ class GPUComputeRasterizer {
   private rendererPipeline?: GPURenderPipeline;
 
   private gpustatBuffer?: GPUBuffer;
-  private commandsListInfoBuffer?: GPUBuffer;
-  private gp0CommandsBuffer?: GPUBuffer;
   private vramBuffer16?: GPUBuffer;
   private vramBuffer32?: GPUBuffer; // zbuf + color [zzzz|mbgr]
+  private commandListsInfoBuffer?: GPUBuffer;
+
+  private fillRectCommandsBuffer?: GPUBuffer;
+  private renderPolyCommandsBuffer?: GPUBuffer;
 
   private rasterizerBindGroup?: GPUBindGroup;
   private rendererBindGroup?: GPUBindGroup;
+
+  private commandListsInfo: CommandListsInfo;
+}
+
+interface CommandListsInfo {
+  fillRectCount: number;
+  renderPolyCount: number;
+  renderLineCount: number;
+  renderRectCount: number;
 }
 
 export default GPUComputeRasterizer;

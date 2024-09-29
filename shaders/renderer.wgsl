@@ -6,13 +6,13 @@ struct VertexOutput {
 
 const vertexPositions = array<vec2f, 6>(
     // first triangle
-    vec2<f32>( 1.0,  1.0),
-    vec2<f32>( 1.0, -1.0),
-    vec2<f32>(-1.0, -1.0),
+    vec2f( 1.0,  1.0),
+    vec2f( 1.0, -1.0),
+    vec2f(-1.0, -1.0),
     // second triangle
-    vec2<f32>( 1.0,  1.0),
-    vec2<f32>(-1.0, -1.0),
-    vec2<f32>(-1.0,  1.0),
+    vec2f( 1.0,  1.0),
+    vec2f(-1.0, -1.0),
+    vec2f(-1.0,  1.0),
 );
 const VRAM_WIDTH:u32 = 1024;
 
@@ -32,7 +32,6 @@ fn PSMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     let i  = gy * VRAM_WIDTH + gx;
 
     let word = vramBuffer[i];
-    let color = word & 0xffff;
 
     let r5 = word & 31;
     let g5 = (word >> 5) & 31;
