@@ -157,7 +157,8 @@ pub fn build_gp0_command_lists(commands: &[u32]) -> GP0CommandLists {
                 _ => {}
             },
             GP0CommandType::RenderPoly => {
-                render_poly_cmd_list.push(build_render_poly_command(&mut cmd_fifo, word, z_index));
+                let commands = build_render_poly_command(&mut cmd_fifo, word, z_index);
+                render_poly_cmd_list.extend(commands);
                 z_index += 1;
             }
             _ => {}
@@ -212,8 +213,9 @@ fn build_render_poly_command(
     fifo: &mut VecDeque<u32>,
     word: u32,
     z_index: u32,
-) -> RenderPolyCommand {
+) -> Vec<RenderPolyCommand> {
     log("build render poly command");
+    let mut commands: Vec<RenderPolyCommand> = Vec::new();
 
     let is_gouraud_shaded = |word: u32| -> bool { (word & (1 << 28)) != 0 };
     let num_vertices = |word: u32| -> u32 {
@@ -238,7 +240,7 @@ fn build_render_poly_command(
     let textured = is_textured(word);
     let texture_blending = textured && has_texture_blending(word);
 
-    let mut vertices: [Vertex; 3] = [Vertex::default(); 3]; // TODO: handle 4 vertices
+    let mut vertices: [Vertex; 4] = [Vertex::default(); 4];
 
     let mut clut_pos = Point::default();
 
@@ -280,21 +282,32 @@ fn build_render_poly_command(
             }
         }
 
-        // TODO: return two commands when 4 vertices
-        if i < 3 {
-            vertices[i as usize] = vertex;
-        }
+        vertices[i as usize] = vertex;
     }
 
-    RenderPolyCommand {
+    commands.push(RenderPolyCommand {
         command: GP0Command {
             code,
             z_index,
             params: 0,
         },
         color,
-        vertices,
+        vertices: [vertices[0], vertices[1], vertices[2]],
+    });
+
+    if num_vertices == 4 {
+        commands.push(RenderPolyCommand {
+            command: GP0Command {
+                code,
+                z_index,
+                params: 0,
+            },
+            color,
+            vertices: [vertices[1], vertices[2], vertices[3]],
+        });
     }
+
+    commands
 }
 
 fn get_cmd_color(word: u32) -> Color {
