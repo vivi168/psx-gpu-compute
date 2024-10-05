@@ -76,22 +76,57 @@ fn PlotPixel(x: u32, y: u32, c: u32) {
     atomicMax(&vramBuffer32[i], c);
 }
 
-fn RenderFlatTriangle(v1: vec2f, v2: vec2f, v3: vec2f, c: u32) {
+fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, c: u32) {
+    let p1 = GetVertexPosition(v1.position);
+    let p2 = GetVertexPosition(v2.position);
+    let p3 = GetVertexPosition(v3.position);
+
     // TODO: clip to current drawing area instead of full vram
-    let minX = max(0u, u32(min(min(v1.x, v2.x), v3.x)));
-    let minY = max(0u, u32(min(min(v1.y, v2.y), v3.y)));
-    let maxX = min(VRAM_WIDTH, u32(max(max(v1.x, v2.x), v3.x)));
-    let maxY = min(VRAM_HEIGHT, u32(max(max(v1.y, v2.y), v3.y)));
+    let minX = max(0u, u32(min(min(p1.x, p2.x), p3.x)));
+    let minY = max(0u, u32(min(min(p1.y, p2.y), p3.y)));
+    let maxX = min(VRAM_WIDTH, u32(max(max(p1.x, p2.x), p3.x)));
+    let maxY = min(VRAM_HEIGHT, u32(max(max(p1.y, p2.y), p3.y)));
 
     for (var y: u32 = minY; y < maxY; y = y + 1) {
         for (var x: u32 = minX; x < maxX; x = x + 1) {
-            let bc = BarycentricCoords(v1, v2, v3, vec2f(f32(x), f32(y)));
+            let bc = BarycentricCoords(p1, p2, p3, vec2f(f32(x), f32(y)));
 
             if bc.x < 0.0 || bc.y < 0.0 || bc.z < 0.0 {
                 continue;
             }
 
             PlotPixel(x, y, c);
+        }
+    }
+}
+
+fn RenderGouraudTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) {
+    // TODO: DRY
+    let p1 = GetVertexPosition(v1.position);
+    let p2 = GetVertexPosition(v2.position);
+    let p3 = GetVertexPosition(v3.position);
+
+    // TODO: clip to current drawing area instead of full vram
+    let minX = max(0u, u32(min(min(p1.x, p2.x), p3.x)));
+    let minY = max(0u, u32(min(min(p1.y, p2.y), p3.y)));
+    let maxX = min(VRAM_WIDTH, u32(max(max(p1.x, p2.x), p3.x)));
+    let maxY = min(VRAM_HEIGHT, u32(max(max(p1.y, p2.y), p3.y)));
+
+    let c1 = GetCommandColor(v1.color);
+    let c2 = GetCommandColor(v2.color);
+    let c3 = GetCommandColor(v3.color);
+
+    for (var y: u32 = minY; y < maxY; y = y + 1) {
+        for (var x: u32 = minX; x < maxX; x = x + 1) {
+            let bc = BarycentricCoords(p1, p2, p3, vec2f(f32(x), f32(y)));
+
+            if bc.x < 0.0 || bc.y < 0.0 || bc.z < 0.0 {
+                continue;
+            }
+
+            let color = bc.x * c1 + bc.y * c2 + bc.z * c3;
+
+            PlotPixel(x, y, FinalPixel(color, z_index));
         }
     }
 }
@@ -105,14 +140,19 @@ fn RenderPoly(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     let poly = renderPolyCommands[idx];
-    let p1 = GetVertexPosition(poly.vertices[0].position);
-    let p2 = GetVertexPosition(poly.vertices[1].position);
-    let p3 = GetVertexPosition(poly.vertices[2].position);
+    let v1 = poly.vertices[0];
+    let v2 = poly.vertices[1];
+    let v3 = poly.vertices[2];
 
-    // TODO: different RenderTriangle function given command params
-    let pixel = FinalPixel(GetCommandColor(poly.color), poly.z_index);
+    let gouraud = (poly.color & (1 << 28)) != 0;
 
-    RenderFlatTriangle(p1, p2, p3, pixel);
+    if gouraud {
+        RenderGouraudTriangle(v1, v2, v3, poly.z_index);
+    } else {
+        let pixel = FinalPixel(GetCommandColor(poly.color), poly.z_index);
+
+        RenderFlatTriangle(v1, v2, v3, pixel);
+    }
 }
 
 @compute @workgroup_size(256)

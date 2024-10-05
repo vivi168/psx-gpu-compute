@@ -127,14 +127,14 @@ pub fn build_gp0_command_lists(commands: &[u32]) -> GP0CommandLists {
                 }
                 0x02 => {
                     fill_rect_cmd_list.push(build_fill_rect_command(&mut cmd_fifo, word, z_index));
-                    z_index += 1;
+                    z_index += 2;
                 }
                 _ => {}
             },
             GP0CommandType::RenderPoly => {
                 let commands = build_render_poly_command(&mut cmd_fifo, word, z_index);
                 render_poly_cmd_list.extend(commands);
-                z_index += 1;
+                z_index += 2;
             }
             _ => {}
         }
@@ -233,7 +233,7 @@ fn build_render_poly_command(
 
     if num_vertices == 4 {
         commands.push(RenderPolyCommand {
-            z_index,
+            z_index: z_index + 1,
             color: word,
             vertices: [vertices[1], vertices[2], vertices[3]],
         });
