@@ -28,6 +28,13 @@ struct RenderPolyCommand {
     vertices: array<Vertex, 3>,
 }
 
+struct TexPageAttributes {
+    position: vec2u,
+    transparency_mode: u32,
+    color_mode: u32,
+    // texture_disable: bool, // TODO
+}
+
 @group(0) @binding(0) var<uniform> gpustat: Gpustat;
 @group(0) @binding(1) var<storage, read> vramBuffer16: array<u32>;
 @group(0) @binding(2) var<storage, read_write> vramBuffer32: array<atomic<u32>>;
@@ -53,6 +60,15 @@ fn GetCommandColor(word: u32) -> vec4f {
     return vec4f(f32(r) / 255.0, f32(g) / 255.0, f32(b) / 255.0, 0.0);
 }
 
+fn GetPixelColor(word: u32) -> vec4f {
+    let r5 = word & 31;
+    let g5 = (word >> 5) & 31;
+    let b5 = (word >> 10) & 31;
+    let a1 = (word >> 15) & 1;
+
+    return vec4f(f32(r5) / 31.0, f32(g5) / 31.0, f32(b5) / 31.0, f32(a1));
+}
+
 fn GetCommandUV(word: u32) -> vec2f {
     let uv = word & 0xffff;
     let u = uv & 0xff;
@@ -61,20 +77,23 @@ fn GetCommandUV(word: u32) -> vec2f {
     return vec2f(f32(u), f32(v));
 }
 
-fn GetCommadClutPos(word: u32) -> vec2f {
+fn GetCommadClutPos(word: u32) -> vec2u {
     let xy = (word >> 16) & 0xffff;
     let x = (xy & 31) * 16;
     let y = (xy >> 6) & 0x1ff; // note: on gpu gen2, y [0..1023]
 
-    return vec2f(f32(x), f32(y));
+    return vec2u(x, y);
 }
 
-fn GetCommandTexBasePage(word: u32) -> vec2f {
-    let xy = (word >> 16) & 0xffff;
-    let x = (xy & 31) * 64;
-    let y = ((xy >> 4) & 1) * 256;
+fn GetCommandTexPageAttributes(word: u32) -> TexPageAttributes {
+    let attrs = (word >> 16) & 0xffff;
+    let x = (attrs & 31) * 64;
+    let y = ((attrs >> 4) & 1) * 256;
 
-    return vec2f(f32(x), f32(y));
+    let transparency_mode = (attrs >> 5) & 3;
+    let color_mode = (attrs >> 7) & 3;
+
+    return TexPageAttributes(vec2u(x, y), transparency_mode, color_mode);
 }
 
 fn GetVertexPosition(word: u32) -> vec2f {
@@ -94,13 +113,29 @@ fn BarycentricCoords(v1: vec2f, v2: vec2f, v3: vec2f, p: vec2f) -> vec3f {
     return vec3f(1.0 - (u.x + u.y) / u.z, u.y / u.z, u.x / u.z);
 }
 
-fn SampleTex(uv: vec2f, clut: vec2f, tex_base_page: vec2f) -> vec4f {
-    // TODO!!!
-    return vec4f(1, 0, 1, 0);
+fn SampleTex(uv: vec2u, clut: vec2u, tex_base_page: TexPageAttributes) -> vec4f {
+    // TODO: wrap texture to texture page
+    // TODO: repeat texture
+    // TODO: correct color mode (4bpp, 8bpp, direct color)
+    // TODO: hardcoded 8 bpp for now
+    let uv2 = vec2u(uv.x / 2, uv.y);
+    let xy = tex_base_page.position + uv2;
+    let ti = xy.y * VRAM_WIDTH + xy.x;
+
+    let texel = atomicLoad(&vramBuffer32[ti]) & 0xffff;
+    let index = (texel >> (uv.x % 2 * 8)) & 0xff;
+
+    let cx = clut.x + index;
+    let cy = clut.y;
+    let ci = cy * VRAM_WIDTH + cx;
+
+    let c = atomicLoad(&vramBuffer32[ci]);
+
+    return GetPixelColor(c);
 }
 
 fn PlotPixel(x: u32, y: u32, c: u32) {
-    let i = (y * VRAM_WIDTH + x);
+    let i = y * VRAM_WIDTH + x;
 
     atomicMax(&vramBuffer32[i], c);
 }
@@ -150,7 +185,7 @@ fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) 
     let uv3 = GetCommandUV(v3.uv);
 
     let clut = GetCommadClutPos(v1.uv);
-    let tex_base_page = GetCommandTexBasePage(v2.uv);
+    let tex_base_page = GetCommandTexPageAttributes(v2.uv);
 
     for (var y: u32 = minY; y < maxY; y = y + 1) {
         for (var x: u32 = minX; x < maxX; x = x + 1) {
@@ -161,9 +196,9 @@ fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) 
             }
 
             let uv = bc.x * uv1 + bc.y * uv2 + bc.z * uv3;
-            let color = SampleTex(uv, clut, tex_base_page);
+            let p = SampleTex(vec2u(uv), clut, tex_base_page);
 
-            PlotPixel(x, y, FinalPixel(color, z_index));
+            PlotPixel(x, y, FinalPixel(color * p, z_index));
         }
     }
 }
