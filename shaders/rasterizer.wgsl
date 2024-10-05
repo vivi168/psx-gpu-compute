@@ -53,6 +53,30 @@ fn GetCommandColor(word: u32) -> vec4f {
     return vec4f(f32(r) / 255.0, f32(g) / 255.0, f32(b) / 255.0, 0.0);
 }
 
+fn GetCommandUV(word: u32) -> vec2f {
+    let uv = word & 0xffff;
+    let u = uv & 0xff;
+    let v = (uv >> 8) & 0xff;
+
+    return vec2f(f32(u), f32(v));
+}
+
+fn GetCommadClutPos(word: u32) -> vec2f {
+    let xy = (word >> 16) & 0xffff;
+    let x = (xy & 31) * 16;
+    let y = (xy >> 6) & 0x1ff; // note: on gpu gen2, y [0..1023]
+
+    return vec2f(f32(x), f32(y));
+}
+
+fn GetCommandTexBasePage(word: u32) -> vec2f {
+    let xy = (word >> 16) & 0xffff;
+    let x = (xy & 31) * 64;
+    let y = ((xy >> 4) & 1) * 256;
+
+    return vec2f(f32(x), f32(y));
+}
+
 fn GetVertexPosition(word: u32) -> vec2f {
     return unpack2x16snorm(word) * 32767;
 }
@@ -70,13 +94,18 @@ fn BarycentricCoords(v1: vec2f, v2: vec2f, v3: vec2f, p: vec2f) -> vec3f {
     return vec3f(1.0 - (u.x + u.y) / u.z, u.y / u.z, u.x / u.z);
 }
 
+fn SampleTex(uv: vec2f, clut: vec2f, tex_base_page: vec2f) -> vec4f {
+    // TODO!!!
+    return vec4f(1, 0, 1, 0);
+}
+
 fn PlotPixel(x: u32, y: u32, c: u32) {
     let i = (y * VRAM_WIDTH + x);
 
     atomicMax(&vramBuffer32[i], c);
 }
 
-fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, c: u32) {
+fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) {
     let p1 = GetVertexPosition(v1.position);
     let p2 = GetVertexPosition(v2.position);
     let p3 = GetVertexPosition(v3.position);
@@ -87,6 +116,8 @@ fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, c: u32) {
     let maxX = min(VRAM_WIDTH, u32(max(max(p1.x, p2.x), p3.x)));
     let maxY = min(VRAM_HEIGHT, u32(max(max(p1.y, p2.y), p3.y)));
 
+    let color = GetCommandColor(v1.color);
+
     for (var y: u32 = minY; y < maxY; y = y + 1) {
         for (var x: u32 = minX; x < maxX; x = x + 1) {
             let bc = BarycentricCoords(p1, p2, p3, vec2f(f32(x), f32(y)));
@@ -95,7 +126,44 @@ fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, c: u32) {
                 continue;
             }
 
-            PlotPixel(x, y, c);
+            PlotPixel(x, y, FinalPixel(color, z_index));
+        }
+    }
+}
+
+fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) {
+    // TODO: DRY
+    let p1 = GetVertexPosition(v1.position);
+    let p2 = GetVertexPosition(v2.position);
+    let p3 = GetVertexPosition(v3.position);
+
+    // TODO: clip to current drawing area instead of full vram
+    let minX = max(0u, u32(min(min(p1.x, p2.x), p3.x)));
+    let minY = max(0u, u32(min(min(p1.y, p2.y), p3.y)));
+    let maxX = min(VRAM_WIDTH, u32(max(max(p1.x, p2.x), p3.x)));
+    let maxY = min(VRAM_HEIGHT, u32(max(max(p1.y, p2.y), p3.y)));
+
+    let color = GetCommandColor(v1.color);
+
+    let uv1 = GetCommandUV(v1.uv);
+    let uv2 = GetCommandUV(v2.uv);
+    let uv3 = GetCommandUV(v3.uv);
+
+    let clut = GetCommadClutPos(v1.uv);
+    let tex_base_page = GetCommandTexBasePage(v2.uv);
+
+    for (var y: u32 = minY; y < maxY; y = y + 1) {
+        for (var x: u32 = minX; x < maxX; x = x + 1) {
+            let bc = BarycentricCoords(p1, p2, p3, vec2f(f32(x), f32(y)));
+
+            if bc.x < 0.0 || bc.y < 0.0 || bc.z < 0.0 {
+                continue;
+            }
+
+            let uv = bc.x * uv1 + bc.y * uv2 + bc.z * uv3;
+            let color = SampleTex(uv, clut, tex_base_page);
+
+            PlotPixel(x, y, FinalPixel(color, z_index));
         }
     }
 }
@@ -145,13 +213,16 @@ fn RenderPoly(@builtin(global_invocation_id) gid: vec3u) {
     let v3 = poly.vertices[2];
 
     let gouraud = (poly.color & (1 << 28)) != 0;
+    let textured = (poly.color & (1 << 26)) != 0;
 
     if gouraud {
         RenderGouraudTriangle(v1, v2, v3, poly.z_index);
     } else {
-        let pixel = FinalPixel(GetCommandColor(poly.color), poly.z_index);
-
-        RenderFlatTriangle(v1, v2, v3, pixel);
+        if (textured) {
+            RenderFlatTexturedTriangle(v1, v2, v3, poly.z_index);
+        } else {
+            RenderFlatTriangle(v1, v2, v3, poly.z_index);
+        }
     }
 }
 

@@ -199,23 +199,17 @@ fn build_render_poly_command(
 
     let mut vertices: [Vertex; 4] = [Vertex::default(); 4];
 
-    // let mut clut_pos = Point::default();
-
     for i in 0..num_vertices {
         let mut vertex: Vertex = Vertex::default();
 
-        if gouraud {
-            if i == 0 {
-                vertex.color = word;
-            } else {
-                vertex.color = fifo.pop_front().unwrap();
-            }
+        if i == 0 {
+            vertex.color = word;
         }
 
-        // let pos = fifo.pop_front().unwrap();
-        // let x = (pos & 0xffff) as i16 as u32;
-        // let y = ((pos >> 16) & 0xffff) as i16 as u32;
-        // vertex.position = Vec2f { x, y };
+        if gouraud && i > 0 {
+            vertex.color = fifo.pop_front().unwrap();
+        }
+
         vertex.position = fifo.pop_front().unwrap();
 
         if textured {
