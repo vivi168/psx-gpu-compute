@@ -37,55 +37,32 @@ extern "C" {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
-struct Color {
-    r: f32,
-    g: f32,
-    b: f32,
-    a: f32,
+struct FillRectCommand {
+    z_index: u32,
+    color: u32,
+    position: u32,
+    size: u32,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
-struct Point {
+struct Vec2f {
     x: u32,
     y: u32,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
-struct Vec2f {
-    x: f32,
-    y: f32,
+struct Vertex {
+    position: u32,
+    uv: u32,
+    color: u32,
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
-struct Vertex {
-    position: Vec2f,
-    uv: Point,
-    color: Color,
-}
-
-#[repr(C, align(16))]
-struct GP0Command {
-    code: u32,
-    z_index: u32,
-    params: u32,
-}
-
-#[repr(C, align(16))]
-struct FillRectCommand {
-    z_index: u32,
-    command: u32,
-    position: u32,
-    size: u32,
-}
-
-#[repr(C, align(16))]
 struct RenderPolyCommand {
-    command: GP0Command,
-    color: Color,
+    z_index: u32,
+    color: u32,
     vertices: [Vertex; 3],
 }
 
@@ -175,9 +152,6 @@ fn get_cmd_type(word: u32) -> GP0CommandType {
 fn get_cmd_params(word: u32) -> u32 {
     (word >> 24) & 0x1f
 }
-fn get_cmd_code(word: u32) -> u32 {
-    (word >> 24) & 0xff
-}
 
 fn build_fill_rect_command(fifo: &mut VecDeque<u32>, word: u32, z_index: u32) -> FillRectCommand {
     log("build fill rect command");
@@ -187,7 +161,7 @@ fn build_fill_rect_command(fifo: &mut VecDeque<u32>, word: u32, z_index: u32) ->
 
     FillRectCommand {
         z_index,
-        command: word,
+        color: word,
         position,
         size,
     }
@@ -210,101 +184,62 @@ fn build_render_poly_command(
         }
     };
     let is_textured = |word: u32| -> bool { (word & (1 << 26)) != 0 };
-    let is_opaque = |word: u32| -> bool { (word & (1 << 25)) == 0 };
-    let has_texture_blending = |word: u32| -> bool { (word & (1 << 24)) == 0 };
+    // let is_opaque = |word: u32| -> bool { (word & (1 << 25)) == 0 };
+    // let has_texture_blending = |word: u32| -> bool { (word & (1 << 24)) == 0 };
 
-    let code = get_cmd_code(word);
-    let color = get_cmd_color(word);
-
+    // let code = get_cmd_code(word);
+    // let color = get_cmd_color(word);
     let num_vertices = num_vertices(word);
-    let code = get_cmd_code(word);
-    let color = get_cmd_color(word);
+    // let code = get_cmd_code(word);
+    // let color = get_cmd_color(word);
     let gouraud = is_gouraud_shaded(word);
-    let opaque = is_opaque(word);
+    // let opaque = is_opaque(word);
     let textured = is_textured(word);
-    let texture_blending = textured && has_texture_blending(word);
+    // let texture_blending = textured && has_texture_blending(word);
 
     let mut vertices: [Vertex; 4] = [Vertex::default(); 4];
 
-    let mut clut_pos = Point::default();
+    // let mut clut_pos = Point::default();
 
     for i in 0..num_vertices {
         let mut vertex: Vertex = Vertex::default();
 
         if gouraud {
             if i == 0 {
-                vertex.color = color;
+                vertex.color = word;
             } else {
-                vertex.color = get_cmd_color(fifo.pop_front().unwrap())
+                vertex.color = fifo.pop_front().unwrap();
             }
         }
 
-        let pos = fifo.pop_front().unwrap();
-        let x = (pos & 0xffff) as i16 as f32;
-        let y = ((pos >> 16) & 0xffff) as i16 as f32;
-        vertex.position = Vec2f { x, y };
+        // let pos = fifo.pop_front().unwrap();
+        // let x = (pos & 0xffff) as i16 as u32;
+        // let y = ((pos >> 16) & 0xffff) as i16 as u32;
+        // vertex.position = Vec2f { x, y };
+        vertex.position = fifo.pop_front().unwrap();
 
         if textured {
-            let tex_info = fifo.pop_front().unwrap();
-            let uv = tex_info & 0xffff;
-            let x = uv & 0xff;
-            let y = (uv >> 8) & 0xff;
-            vertex.uv = Point { x, y };
-
-            if i == 0 {
-                let xy = (tex_info >> 16) & 0xffff;
-                clut_pos.x = (xy & 0b11111) * 16;
-                clut_pos.y = (xy >> 6) & 0x1ff; // note: on gpu gen2, y [0..1023]
-            } else if i == 1 {
-                // TODO: TexPageAttributes struct
-                let attrs = (tex_info >> 16) & 0xffff;
-                let base_x = (attrs & 0b1111) * 64;
-                let base_y = ((attrs >> 4) & 1) * 256;
-                let transparency_mode = (attrs >> 5) & 0b11;
-                let color_mode = (attrs >> 7) & 0b11;
-                let texture_disable = (attrs & (1 << 11)) != 0;
-            }
+            vertex.uv = fifo.pop_front().unwrap();
         }
 
         vertices[i as usize] = vertex;
     }
 
     commands.push(RenderPolyCommand {
-        command: GP0Command {
-            code,
-            z_index,
-            params: 0,
-        },
-        color,
+        z_index,
+        color: word,
         vertices: [vertices[0], vertices[1], vertices[2]],
     });
 
     if num_vertices == 4 {
         commands.push(RenderPolyCommand {
-            command: GP0Command {
-                code,
-                z_index,
-                params: 0,
-            },
-            color,
+            z_index,
+            color: word,
             vertices: [vertices[1], vertices[2], vertices[3]],
         });
     }
 
     commands
-}
-
-fn get_cmd_color(word: u32) -> Color {
-    let r = word & 0xff;
-    let g = (word >> 8) & 0xff;
-    let b = (word >> 16) & 0xff;
-
-    Color {
-        r: r as f32 / 255.0,
-        g: g as f32 / 255.0,
-        b: b as f32 / 255.0,
-        a: 0.0,
-    }
 }
 
 pub fn u8_vec<T>(v: &Vec<T>) -> Vec<u8> {

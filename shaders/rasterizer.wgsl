@@ -9,28 +9,22 @@ struct CommandListsInfo {
     renderRectCount: u32,
 }
 
-struct Vertex {
-    position: vec2f,
-    uv: vec2u,
-    color: vec4f,
-}
-
-struct GP0Command {
-    code: u32,
-    zIndex: u32,
-    params: u32,
-}
-
 struct FillRectCommand {
     z_index: u32,
-    command: u32,
+    color: u32,
     position: u32,
     size: u32,
 }
 
+struct Vertex {
+    position: u32,
+    uv: u32,
+    color: u32,
+}
+
 struct RenderPolyCommand {
-    command: GP0Command,
-    color: vec4f,
+    z_index: u32,
+    color: u32,
     vertices: array<Vertex, 3>,
 }
 
@@ -49,6 +43,24 @@ fn FinalPixel(color: vec4f, zIndex: u32) -> u32 {
     let rgb555 = u32(color.x * 31.0) | (u32(color.y * 31.0) << 5) | (u32(color.z * 31.0) << 10);
 
     return rgb555 | (zIndex << 16);
+}
+
+fn GetCommandColor(word: u32) -> vec4f {
+    let r = word & 0xff;
+    let g = (word >> 8) & 0xff;
+    let b = (word >> 16) & 0xff;
+
+    return vec4f(f32(r) / 255.0, f32(g) / 255.0, f32(b) / 255.0, 0.0);
+}
+
+fn GetVertexPosition(word: u32) -> vec2f {
+    let xi = i32(word & 0xffff);
+    let yi = i32((word >> 16) & 0xffff);
+
+    let xf = f32((xi << 16) >> 16);
+    let yf = f32((yi << 16) >> 16);
+
+    return vec2f(xf, yf);
 }
 
 fn BarycentricCoords(v1: vec2f, v2: vec2f, v3: vec2f, p: vec2f) -> vec3f {
@@ -99,27 +111,14 @@ fn RenderPoly(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     let poly = renderPolyCommands[idx];
-    let p1 = poly.vertices[0].position;
-    let p2 = poly.vertices[1].position;
-    let p3 = poly.vertices[2].position;
+    let p1 = GetVertexPosition(poly.vertices[0].position);
+    let p2 = GetVertexPosition(poly.vertices[1].position);
+    let p3 = GetVertexPosition(poly.vertices[2].position);
 
     // TODO: different RenderTriangle function given command params
-    let pixel = FinalPixel(poly.color, poly.command.zIndex);
+    let pixel = FinalPixel(GetCommandColor(poly.color), poly.z_index);
 
-    RenderFlatTriangle(
-        vec2f(p1.x, p1.y),
-        vec2f(p2.x, p2.y),
-        vec2f(p3.x, p3.y),
-        pixel
-    );
-}
-
-fn GetCommandColor(word: u32) -> vec4f {
-    let r = word & 0xff;
-    let g = (word >> 8) & 0xff;
-    let b = (word >> 16) & 0xff;
-
-    return vec4f(f32(r) / 255.0, f32(g) / 255.0, f32(b) / 255.0, 0.0);
+    RenderFlatTriangle(p1, p2, p3, pixel);
 }
 
 @compute @workgroup_size(256)
@@ -127,13 +126,13 @@ fn FillRect(
     @builtin(global_invocation_id) gid : vec3<u32>,
     @builtin(local_invocation_id) lid : vec3u,
 ) {
-    let ri = gid.x;
+    let idx = gid.x;
 
-    if ri >= commandListsInfo.fillRectCount {
+    if idx >= commandListsInfo.fillRectCount {
         return;
     }
 
-    let rect = fillRectCommands[ri];
+    let rect = fillRectCommands[idx];
     let start_x = (rect.position & 0x3f) * 16;
     let start_y = (rect.position >> 16) & 0x1ff;
     let width = ((rect.size & 0x3ff) + 0xf) & 0xfffffff0;
@@ -145,7 +144,7 @@ fn FillRect(
     for (var j = start_y; j < end_y; j = j + 1) {
         for (var i = start_x; i < end_x; i = i + 1) {
 
-            let pixel = FinalPixel(GetCommandColor(rect.command), rect.z_index);
+            let pixel = FinalPixel(GetCommandColor(rect.color), rect.z_index);
             PlotPixel(i % 1024, j % 512, pixel);
         }
     }
@@ -167,5 +166,7 @@ fn InitVram(@builtin(global_invocation_id) gid: vec3u) {
         byte = word & 0xffff;
     }
 
+    // TODO: 2 atomic store per thread
+    // dispatch half workgroups ?
     atomicStore(&vramBuffer32[idx], byte);
 }
