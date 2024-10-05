@@ -122,31 +122,28 @@ fn GetCommandColor(word: u32) -> vec4f {
     return vec4f(f32(r) / 255.0, f32(g) / 255.0, f32(b) / 255.0, 0.0);
 }
 
-// TODO: don't be clever => don't split into small rectangles?
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(256)
 fn FillRect(
-    @builtin(workgroup_id) wid : vec3<u32>,
+    @builtin(global_invocation_id) gid : vec3<u32>,
     @builtin(local_invocation_id) lid : vec3u,
 ) {
-    let ri = wid.x;
+    let ri = gid.x;
+
+    if ri >= commandListsInfo.fillRectCount {
+        return;
+    }
 
     let rect = fillRectCommands[ri];
-    let x = (rect.position & 0x3f) * 16;
-    let y = (rect.position >> 16) & 0x1ff;
+    let start_x = (rect.position & 0x3f) * 16;
+    let start_y = (rect.position >> 16) & 0x1ff;
     let width = ((rect.size & 0x3ff) + 0xf) & 0xfffffff0;
     let height = (rect.size >> 16) & 0x1ff;
 
-    let numPixelX = (width + 15) / 16;
-    let numPixelY = (height + 15) / 16;
+    let end_x = start_x + width;
+    let end_y = start_y + height;
 
-    let startX = x + lid.x * numPixelX;
-    let startY = y + lid.y * numPixelY;
-
-    let endX = min(startX + numPixelX, startX + width);
-    let endY = min(startY + numPixelY, startY + height);
-
-    for (var j = startY; j < endY; j = j + 1) {
-        for (var i = startX; i < endX; i = i + 1) {
+    for (var j = start_y; j < end_y; j = j + 1) {
+        for (var i = start_x; i < end_x; i = i + 1) {
 
             let pixel = FinalPixel(GetCommandColor(rect.command), rect.z_index);
             PlotPixel(i % 1024, j % 512, pixel);

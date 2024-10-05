@@ -76,7 +76,9 @@ class GPUComputeRasterizer {
 
       fillRectPass.setPipeline(this.fillRectPipeline!);
       fillRectPass.setBindGroup(0, this.rasterizerBindGroup!);
-      fillRectPass.dispatchWorkgroups(this.commandListsInfo.fillRectCount);
+      fillRectPass.dispatchWorkgroups(
+        Math.ceil(this.commandListsInfo.fillRectCount / 256)
+      );
       fillRectPass.end();
     }
 
