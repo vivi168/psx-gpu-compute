@@ -22,12 +22,10 @@ struct GP0Command {
 }
 
 struct FillRectCommand {
-    command: GP0Command,
-    color: vec4f,
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
+    z_index: u32,
+    command: u32,
+    position: u32,
+    size: u32,
 }
 
 struct RenderPolyCommand {
@@ -116,6 +114,14 @@ fn RenderPoly(@builtin(global_invocation_id) gid: vec3u) {
     );
 }
 
+fn GetCommandColor(word: u32) -> vec4f {
+    let r = word & 0xff;
+    let g = (word >> 8) & 0xff;
+    let b = (word >> 16) & 0xff;
+
+    return vec4f(f32(r) / 255.0, f32(g) / 255.0, f32(b) / 255.0, 0.0);
+}
+
 // TODO: don't be clever => don't split into small rectangles?
 @compute @workgroup_size(16, 16)
 fn FillRect(
@@ -125,19 +131,24 @@ fn FillRect(
     let ri = wid.x;
 
     let rect = fillRectCommands[ri];
-    let numPixelX = (rect.width + 15) / 16;
-    let numPixelY = (rect.height + 15) / 16;
+    let x = (rect.position & 0x3f) * 16;
+    let y = (rect.position >> 16) & 0x1ff;
+    let width = ((rect.size & 0x3ff) + 0xf) & 0xfffffff0;
+    let height = (rect.size >> 16) & 0x1ff;
 
-    let startX = rect.x + lid.x * numPixelX;
-    let startY = rect.y + lid.y * numPixelY;
+    let numPixelX = (width + 15) / 16;
+    let numPixelY = (height + 15) / 16;
 
-    let endX = min(startX + numPixelX, startX + rect.width);
-    let endY = min(startY + numPixelY, startY + rect.height);
+    let startX = x + lid.x * numPixelX;
+    let startY = y + lid.y * numPixelY;
+
+    let endX = min(startX + numPixelX, startX + width);
+    let endY = min(startY + numPixelY, startY + height);
 
     for (var j = startY; j < endY; j = j + 1) {
         for (var i = startX; i < endX; i = i + 1) {
 
-            let pixel = FinalPixel(rect.color, rect.command.zIndex);
+            let pixel = FinalPixel(GetCommandColor(rect.command), rect.z_index);
             PlotPixel(i % 1024, j % 512, pixel);
         }
     }

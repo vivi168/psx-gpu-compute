@@ -2,7 +2,7 @@ import {useRef} from 'react';
 import {BuildGP0CommandList} from './GPUCommands';
 import './App.css';
 import GPUComputeRasterizer from './GPUComputeRasterizer';
-import InitWasm, {BuildGP0CommandLists} from '../gpu-commands/pkg/gpu_commands';
+import {BuildGP0CommandLists} from '../gpu-commands/pkg/gpu_commands';
 
 function App() {
   const vramViewerRef = useRef<HTMLCanvasElement>(null);
@@ -73,7 +73,6 @@ async function Render(params: InitParams) {
   const {gpustat, gpuCommands, vramBuf} = params;
   const {vramViewerRef} = params.canvasRef;
 
-  await InitWasm();
   const commandLists = BuildGP0CommandLists(Uint32Array.from(gpuCommands));
 
   const commandList = BuildGP0CommandList(gpuCommands);

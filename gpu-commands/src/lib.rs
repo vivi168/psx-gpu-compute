@@ -76,12 +76,10 @@ struct GP0Command {
 
 #[repr(C, align(16))]
 struct FillRectCommand {
-    command: GP0Command,
-    color: Color,
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
+    z_index: u32,
+    command: u32,
+    position: u32,
+    size: u32,
 }
 
 #[repr(C, align(16))]
@@ -184,28 +182,14 @@ fn get_cmd_code(word: u32) -> u32 {
 fn build_fill_rect_command(fifo: &mut VecDeque<u32>, word: u32, z_index: u32) -> FillRectCommand {
     log("build fill rect command");
 
-    let code = get_cmd_code(word);
-    let color = get_cmd_color(word);
-
-    let pos = fifo.pop_front().unwrap();
-    let x = (pos & 0x3f) * 16;
-    let y = (pos >> 16) & 0x1ff;
-
+    let position = fifo.pop_front().unwrap();
     let size = fifo.pop_front().unwrap();
-    let width = ((size & 0x3ff) + 0xf) & !0xf;
-    let height = (size >> 16) & 0x1ff;
 
     FillRectCommand {
-        command: GP0Command {
-            code,
-            z_index,
-            params: 0,
-        },
-        color,
-        x,
-        y,
-        width,
-        height,
+        z_index,
+        command: word,
+        position,
+        size,
     }
 }
 
