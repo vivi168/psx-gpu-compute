@@ -54,13 +54,7 @@ fn GetCommandColor(word: u32) -> vec4f {
 }
 
 fn GetVertexPosition(word: u32) -> vec2f {
-    let xi = i32(word & 0xffff);
-    let yi = i32((word >> 16) & 0xffff);
-
-    let xf = f32((xi << 16) >> 16);
-    let yf = f32((yi << 16) >> 16);
-
-    return vec2f(xf, yf);
+    return unpack2x16snorm(word) * 32767;
 }
 
 fn BarycentricCoords(v1: vec2f, v2: vec2f, v3: vec2f, p: vec2f) -> vec3f {
@@ -153,20 +147,13 @@ fn FillRect(
 @compute @workgroup_size(256)
 fn InitVram(@builtin(global_invocation_id) gid: vec3u) {
     let idx = gid.x;
+    let ri = idx * 2;
 
-    let ri = idx / 2;
-    let bi = idx % 2;
+    let word = vramBuffer16[idx];
 
-    let word = vramBuffer16[ri];
-    var byte = 0u;
+    let byte1 = word & 0xffff;
+    let byte2 = (word >> 16) & 0xffff;
 
-    if bi % 2 == 1 {
-        byte = (word >> 16) & 0xffff;
-    } else {
-        byte = word & 0xffff;
-    }
-
-    // TODO: 2 atomic store per thread
-    // dispatch half workgroups ?
-    atomicStore(&vramBuffer32[idx], byte);
+    atomicStore(&vramBuffer32[ri], byte1);
+    atomicStore(&vramBuffer32[ri + 1], byte2);
 }

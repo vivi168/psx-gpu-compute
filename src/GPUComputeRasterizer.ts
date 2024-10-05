@@ -64,7 +64,7 @@ class GPUComputeRasterizer {
 
     initVramPass.setPipeline(this.initVramPipeline!);
     initVramPass.setBindGroup(0, this.rasterizerBindGroup!);
-    initVramPass.dispatchWorkgroups(VRAM_SIZE / 256); // TODO / 2
+    initVramPass.dispatchWorkgroups(VRAM_SIZE / 256 / 2);
     initVramPass.end();
 
     // ====
