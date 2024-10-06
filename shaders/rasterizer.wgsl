@@ -248,6 +248,47 @@ fn RenderGouraudTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) {
     }
 }
 
+fn RenderGouraudTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, tex_info: u32, z_index: u32) {
+    // TODO: DRY
+    let p1 = GetVertexPosition(v1.position);
+    let p2 = GetVertexPosition(v2.position);
+    let p3 = GetVertexPosition(v3.position);
+
+    // TODO: clip to current drawing area instead of full vram
+    let minX = max(0u, u32(min(min(p1.x, p2.x), p3.x)));
+    let minY = max(0u, u32(min(min(p1.y, p2.y), p3.y)));
+    let maxX = min(VRAM_WIDTH, u32(max(max(p1.x, p2.x), p3.x)));
+    let maxY = min(VRAM_HEIGHT, u32(max(max(p1.y, p2.y), p3.y)));
+
+    let c1 = GetCommandColor(v1.color);
+    let c2 = GetCommandColor(v2.color);
+    let c3 = GetCommandColor(v3.color);
+
+    let uv1 = GetCommandUV(v1.uv);
+    let uv2 = GetCommandUV(v2.uv);
+    let uv3 = GetCommandUV(v3.uv);
+
+    let m = GetCommandModulation(color);
+    let clut = GetCommadClutPos(tex_info);
+    let tex_base_page = GetCommandTexPageAttributes(tex_info);
+
+    for (var y: u32 = minY; y < maxY; y = y + 1) {
+        for (var x: u32 = minX; x < maxX; x = x + 1) {
+            let bc = BarycentricCoords(p1, p2, p3, vec2f(f32(x), f32(y)));
+
+            if bc.x < 0.0 || bc.y < 0.0 || bc.z < 0.0 {
+                continue;
+            }
+
+            let c = bc.x * c1 + bc.y * c2 + bc.z * c3;
+            let uv = bc.x * uv1 + bc.y * uv2 + bc.z * uv3;
+            let p = SampleTex(vec2u(uv), clut, tex_base_page);
+
+            PlotPixel(x, y, FinalPixel(clamp(c * m * p, vec4f(0), vec4f(1)) , z_index));
+        }
+    }
+}
+
 @compute @workgroup_size(256)
 fn RenderPoly(@builtin(global_invocation_id) gid: vec3u) {
     let idx = gid.x;
@@ -265,9 +306,13 @@ fn RenderPoly(@builtin(global_invocation_id) gid: vec3u) {
     let textured = (poly.color & (1 << 26)) != 0;
 
     if gouraud {
-        RenderGouraudTriangle(v1, v2, v3, poly.z_index);
+        if textured {
+            RenderGouraudTexturedTriangle(v1, v2, v3, poly.color, poly.tex_info, poly.z_index);
+        } else {
+            RenderGouraudTriangle(v1, v2, v3, poly.z_index);
+        }
     } else {
-        if (textured) {
+        if textured {
             RenderFlatTexturedTriangle(v1, v2, v3, poly.color, poly.tex_info, poly.z_index);
         } else {
             RenderFlatTriangle(v1, v2, v3, poly.color, poly.z_index);
