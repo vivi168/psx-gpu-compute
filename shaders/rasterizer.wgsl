@@ -119,17 +119,23 @@ fn BarycentricCoords(v1: vec2f, v2: vec2f, v3: vec2f, p: vec2f) -> vec3f {
     return vec3f(1.0 - (u.x + u.y) / u.z, u.y / u.z, u.x / u.z);
 }
 
+// TODO: wrap texture to texture page
+// TODO: repeat texture
 fn SampleTex(uv: vec2u, clut: vec2u, tex_base_page: TexPageAttributes) -> vec4f {
-    // TODO: wrap texture to texture page
-    // TODO: repeat texture
-    // TODO: correct color mode (4bpp, 8bpp, direct color)
-    // TODO: hardcoded 8 bpp for now
-    let uv2 = vec2u(uv.x / 2, uv.y);
+    let bpp = 4u << tex_base_page.color_mode;
+    let r = 16u / bpp;
+
+    let uv2 = vec2u(uv.x / r, uv.y);
     let xy = tex_base_page.position + uv2;
     let ti = xy.y * VRAM_WIDTH + xy.x;
 
     let texel = atomicLoad(&vramBuffer32[ti]) & 0xffff;
-    let index = (texel >> (uv.x % 2 * 8)) & 0xff;
+
+    if tex_base_page.color_mode == 2 {
+        return GetPixelColor(texel);
+    }
+
+    let index = (texel >> (uv.x % r * bpp)) & 0xff;
 
     let cx = clut.x + index;
     let cy = clut.y;
