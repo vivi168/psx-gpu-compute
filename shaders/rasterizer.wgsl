@@ -96,6 +96,12 @@ fn GetCommandTexPageAttributes(word: u32) -> TexPageAttributes {
     return TexPageAttributes(vec2u(x, y), transparency_mode, color_mode);
 }
 
+// AKA texture blending
+fn GetCommandModulation(word: u32) -> f32 {
+    let modulation = (word & (1 << 24)) == 0;
+    return 1.0 + f32(modulation) * (255.0/128.0 - 1.0);
+}
+
 fn GetVertexPosition(word: u32) -> vec2f {
     return unpack2x16snorm(word) * 32767;
 }
@@ -178,7 +184,7 @@ fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) 
     let maxX = min(VRAM_WIDTH, u32(max(max(p1.x, p2.x), p3.x)));
     let maxY = min(VRAM_HEIGHT, u32(max(max(p1.y, p2.y), p3.y)));
 
-    let color = GetCommandColor(v1.color);
+    let color = GetCommandColor(v1.color) * GetCommandModulation(v1.color);
 
     let uv1 = GetCommandUV(v1.uv);
     let uv2 = GetCommandUV(v2.uv);
@@ -198,7 +204,7 @@ fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) 
             let uv = bc.x * uv1 + bc.y * uv2 + bc.z * uv3;
             let p = SampleTex(vec2u(uv), clut, tex_base_page);
 
-            PlotPixel(x, y, FinalPixel(color * p, z_index));
+            PlotPixel(x, y, FinalPixel(clamp(color * p, vec4f(0), vec4f(1)) , z_index));
         }
     }
 }
