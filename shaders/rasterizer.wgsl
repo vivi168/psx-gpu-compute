@@ -25,6 +25,7 @@ struct Vertex {
 struct RenderPolyCommand {
     z_index: u32,
     color: u32,
+    tex_info: u32,
     vertices: array<Vertex, 3>,
 }
 
@@ -78,7 +79,7 @@ fn GetCommandUV(word: u32) -> vec2f {
 }
 
 fn GetCommadClutPos(word: u32) -> vec2u {
-    let xy = (word >> 16) & 0xffff;
+    let xy = word & 0xffff;
     let x = (xy & 31) * 16;
     let y = (xy >> 6) & 0x1ff; // note: on gpu gen2, y [0..1023]
 
@@ -152,7 +153,7 @@ fn PlotPixel(x: u32, y: u32, c: u32) {
     atomicMax(&vramBuffer32[i], c);
 }
 
-fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) {
+fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, z_index: u32) {
     let p1 = GetVertexPosition(v1.position);
     let p2 = GetVertexPosition(v2.position);
     let p3 = GetVertexPosition(v3.position);
@@ -163,7 +164,7 @@ fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) {
     let maxX = min(VRAM_WIDTH, u32(max(max(p1.x, p2.x), p3.x)));
     let maxY = min(VRAM_HEIGHT, u32(max(max(p1.y, p2.y), p3.y)));
 
-    let color = GetCommandColor(v1.color);
+    let c = GetCommandColor(color);
 
     for (var y: u32 = minY; y < maxY; y = y + 1) {
         for (var x: u32 = minX; x < maxX; x = x + 1) {
@@ -173,12 +174,12 @@ fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) {
                 continue;
             }
 
-            PlotPixel(x, y, FinalPixel(color, z_index));
+            PlotPixel(x, y, FinalPixel(c, z_index));
         }
     }
 }
 
-fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) {
+fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, tex_info: u32, z_index: u32) {
     // TODO: DRY
     let p1 = GetVertexPosition(v1.position);
     let p2 = GetVertexPosition(v2.position);
@@ -190,14 +191,14 @@ fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) 
     let maxX = min(VRAM_WIDTH, u32(max(max(p1.x, p2.x), p3.x)));
     let maxY = min(VRAM_HEIGHT, u32(max(max(p1.y, p2.y), p3.y)));
 
-    let color = GetCommandColor(v1.color) * GetCommandModulation(v1.color);
+    let c = GetCommandColor(color) * GetCommandModulation(color);
 
     let uv1 = GetCommandUV(v1.uv);
     let uv2 = GetCommandUV(v2.uv);
     let uv3 = GetCommandUV(v3.uv);
 
-    let clut = GetCommadClutPos(v1.uv);
-    let tex_base_page = GetCommandTexPageAttributes(v2.uv);
+    let clut = GetCommadClutPos(tex_info);
+    let tex_base_page = GetCommandTexPageAttributes(tex_info);
 
     for (var y: u32 = minY; y < maxY; y = y + 1) {
         for (var x: u32 = minX; x < maxX; x = x + 1) {
@@ -210,7 +211,7 @@ fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) 
             let uv = bc.x * uv1 + bc.y * uv2 + bc.z * uv3;
             let p = SampleTex(vec2u(uv), clut, tex_base_page);
 
-            PlotPixel(x, y, FinalPixel(clamp(color * p, vec4f(0), vec4f(1)) , z_index));
+            PlotPixel(x, y, FinalPixel(clamp(c * p, vec4f(0), vec4f(1)) , z_index));
         }
     }
 }
@@ -266,9 +267,9 @@ fn RenderPoly(@builtin(global_invocation_id) gid: vec3u) {
         RenderGouraudTriangle(v1, v2, v3, poly.z_index);
     } else {
         if (textured) {
-            RenderFlatTexturedTriangle(v1, v2, v3, poly.z_index);
+            RenderFlatTexturedTriangle(v1, v2, v3, poly.color, poly.tex_info, poly.z_index);
         } else {
-            RenderFlatTriangle(v1, v2, v3, poly.z_index);
+            RenderFlatTriangle(v1, v2, v3, poly.color, poly.z_index);
         }
     }
 }

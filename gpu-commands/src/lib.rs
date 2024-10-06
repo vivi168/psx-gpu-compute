@@ -63,6 +63,7 @@ struct Vertex {
 struct RenderPolyCommand {
     z_index: u32,
     color: u32,
+    tex_info: u32,
     vertices: [Vertex; 3],
 }
 
@@ -184,18 +185,10 @@ fn build_render_poly_command(
         }
     };
     let is_textured = |word: u32| -> bool { (word & (1 << 26)) != 0 };
-    // let is_opaque = |word: u32| -> bool { (word & (1 << 25)) == 0 };
-    // let has_texture_blending = |word: u32| -> bool { (word & (1 << 24)) == 0 };
 
-    // let code = get_cmd_code(word);
-    // let color = get_cmd_color(word);
     let num_vertices = num_vertices(word);
-    // let code = get_cmd_code(word);
-    // let color = get_cmd_color(word);
     let gouraud = is_gouraud_shaded(word);
-    // let opaque = is_opaque(word);
     let textured = is_textured(word);
-    // let texture_blending = textured && has_texture_blending(word);
 
     let mut vertices: [Vertex; 4] = [Vertex::default(); 4];
 
@@ -219,9 +212,14 @@ fn build_render_poly_command(
         vertices[i as usize] = vertex;
     }
 
+    let clut = (vertices[0].uv >> 16) & 0xffff;
+    let tpage = (vertices[1].uv >> 16) & 0xffff;
+    let tex_info = clut | (tpage << 16);
+
     commands.push(RenderPolyCommand {
         z_index,
         color: word,
+        tex_info,
         vertices: [vertices[0], vertices[1], vertices[2]],
     });
 
@@ -229,6 +227,7 @@ fn build_render_poly_command(
         commands.push(RenderPolyCommand {
             z_index: z_index + 1,
             color: word,
+            tex_info,
             vertices: [vertices[1], vertices[2], vertices[3]],
         });
     }
