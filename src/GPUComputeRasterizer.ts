@@ -112,7 +112,7 @@ class GPUComputeRasterizer {
     const drawPass = encoder.beginRenderPass(renderPassDescriptor);
     drawPass.setPipeline(this.rendererPipeline!);
     drawPass.setBindGroup(0, this.rendererBindGroup!);
-    drawPass.draw(6, 1, 0, 0);
+    drawPass.draw(3, 1, 0, 0);
     drawPass.end();
 
     // ====

@@ -4,15 +4,10 @@ struct VertexOutput {
 
 @group(0) @binding(0) var<storage, read> vramBuffer: array<u32>;
 
-const vertexPositions = array<vec2f, 6>(
-    // first triangle
-    vec2f( 1.0,  1.0),
-    vec2f( 1.0, -1.0),
-    vec2f(-1.0, -1.0),
-    // second triangle
-    vec2f( 1.0,  1.0),
-    vec2f(-1.0, -1.0),
-    vec2f(-1.0,  1.0),
+const vertexPositions = array<vec2f, 3>(
+    vec2f(-1,  3),
+    vec2f( 3, -1),
+    vec2f(-1, -1),
 );
 const VRAM_WIDTH:u32 = 1024;
 

@@ -277,7 +277,7 @@ fn RenderPoly(@builtin(global_invocation_id) gid: vec3u) {
 
 @compute @workgroup_size(256)
 fn FillRect(
-    @builtin(global_invocation_id) gid : vec3<u32>,
+    @builtin(global_invocation_id) gid : vec3u,
     @builtin(local_invocation_id) lid : vec3u,
 ) {
     let idx = gid.x;
