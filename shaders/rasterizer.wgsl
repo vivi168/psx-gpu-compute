@@ -136,7 +136,8 @@ fn SampleTex(uv: vec2u, clut: vec2u, tex_base_page: TexPageAttributes) -> vec4f 
         return GetPixelColor(texel);
     }
 
-    let index = (texel >> (uv.x % r * bpp)) & 0xff;
+    let mask = (1u << bpp) - 1;
+    let index = (texel >> (uv.x % r * bpp)) & mask;
 
     let cx = clut.x + index;
     let cy = clut.y;
