@@ -121,14 +121,15 @@ pub fn build_gp0_command_lists(commands: &[u32]) -> GP0CommandLists {
                 }
                 0x02 => {
                     fill_rect_cmd_list.push(build_fill_rect_command(&mut cmd_fifo, word, z_index));
-                    z_index += 2;
+                    z_index += 1;
                 }
                 _ => {}
             },
             GP0CommandType::RenderPoly => {
                 let commands = build_render_poly_command(&mut cmd_fifo, word, z_index);
+                let len = commands.len() as u32;
                 render_poly_cmd_list.extend(commands);
-                z_index += 2;
+                z_index += len;
             }
             _ => {}
         }

@@ -1,5 +1,4 @@
 import {useRef} from 'react';
-import {BuildGP0CommandList} from './GPUCommands';
 import './App.css';
 import GPUComputeRasterizer from './GPUComputeRasterizer';
 import {BuildGP0CommandLists} from '../gpu-commands/pkg/gpu_commands';
@@ -74,9 +73,6 @@ async function Render(params: InitParams) {
   const {vramViewerRef} = params.canvasRef;
 
   const commandLists = BuildGP0CommandLists(Uint32Array.from(gpuCommands));
-
-  const commandList = BuildGP0CommandList(gpuCommands);
-  console.log(commandList);
 
   const rasterizer = new GPUComputeRasterizer();
   await rasterizer.Init(gpustat, commandLists, vramBuf);
