@@ -149,6 +149,10 @@ fn SampleTex(uv: vec2u, clut: vec2u, tex_base_page: TexPageAttributes) -> vec4f 
 }
 
 fn PlotPixel(x: u32, y: u32, c: u32) {
+    if (c & 0xffff) == 0 {
+        return;
+    }
+
     let i = y * VRAM_WIDTH + x;
 
     atomicMax(&vramBuffer32[i], c);
