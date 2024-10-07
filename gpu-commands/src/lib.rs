@@ -46,13 +46,6 @@ struct FillRectCommand {
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
-struct Vec2f {
-    x: u32,
-    y: u32,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Default)]
 struct Vertex {
     position: u32,
     uv: u32,
