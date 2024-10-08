@@ -80,7 +80,7 @@ fn GetCommandUV(word: u32) -> vec2f {
 
 fn GetCommadClutPos(word: u32) -> vec2u {
     let xy = word & 0xffff;
-    let x = (xy & 31) * 16;
+    let x = (xy & 0x3f) * 16;
     let y = (xy >> 6) & 0x1ff; // note: on gpu gen2, y [0..1023]
 
     return vec2u(x, y);
@@ -153,6 +153,12 @@ fn PlotPixel(x: u32, y: u32, c: u32) {
         return;
     }
 
+    let i = y * VRAM_WIDTH + x;
+
+    atomicMax(&vramBuffer32[i], c);
+}
+
+fn PlotPixel1(x: u32, y: u32, c: u32) {
     let i = y * VRAM_WIDTH + x;
 
     atomicMax(&vramBuffer32[i], c);
@@ -348,7 +354,7 @@ fn FillRect(
         for (var i = start_x; i < end_x; i = i + 1) {
 
             let pixel = FinalPixel(GetCommandColor(rect.color), rect.z_index);
-            PlotPixel(i % 1024, j % 512, pixel);
+            PlotPixel1(i % 1024, j % 512, pixel);
         }
     }
 }
