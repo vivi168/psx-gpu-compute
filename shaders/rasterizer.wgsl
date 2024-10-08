@@ -219,7 +219,7 @@ fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, te
                 continue;
             }
 
-            let uv = bc.x * uv1 + bc.y * uv2 + bc.z * uv3;
+            let uv = round(bc.x * uv1 + bc.y * uv2 + bc.z * uv3);
             let p = SampleTex(vec2u(uv), clut, tex_base_page);
 
             PlotPixel(x, y, FinalPixel(clamp(c * p, vec4f(0), vec4f(1)) , z_index));
@@ -291,7 +291,8 @@ fn RenderGouraudTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32,
             }
 
             let c = bc.x * c1 + bc.y * c2 + bc.z * c3;
-            let uv = bc.x * uv1 + bc.y * uv2 + bc.z * uv3;
+            // TODO: DRY
+            let uv = round(bc.x * uv1 + bc.y * uv2 + bc.z * uv3);
             let p = SampleTex(vec2u(uv), clut, tex_base_page);
 
             PlotPixel(x, y, FinalPixel(clamp(c * m * p, vec4f(0), vec4f(1)) , z_index));
