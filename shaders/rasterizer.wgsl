@@ -11,6 +11,7 @@ struct CommandListsInfo {
 
 struct FillRectCommand {
     z_index: u32,
+    rdr_attrs_idx: u32,
     color: u32,
     position: u32,
     size: u32,
@@ -24,6 +25,7 @@ struct Vertex {
 
 struct RenderPolyCommand {
     z_index: u32,
+    rdr_attrs_idx: u32,
     color: u32,
     tex_info: u32,
     vertices: array<Vertex, 3>,

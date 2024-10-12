@@ -39,6 +39,11 @@ class GPUComputeRasterizer {
     const renderPolyCount =
       gp0CommandLists.RenderPolyCommandCount /
       gp0CommandLists.RenderPolyCommandSize;
+    const renderingAttributesCount =
+      gp0CommandLists.RenderingAttributesCount /
+      gp0CommandLists.RenderingAttributesSize;
+
+    console.log(renderingAttributesCount);
 
     this.commandListsInfo = {
       fillRectCount,

@@ -34,11 +34,18 @@ impl From<u32> for GP0CommandType {
 extern "C" {
     #[wasm_bindgen(js_namespace=console)]
     pub fn log(s: &str);
+
+    #[wasm_bindgen(js_namespace=console)]
+    pub fn warn(s: &str);
+
+    #[wasm_bindgen(js_namespace=console)]
+    pub fn error(s: &str);
 }
 
 #[repr(C)]
 struct FillRectCommand {
     z_index: u32,
+    rdr_attrs_idx: u32,
     color: u32,
     position: u32,
     size: u32,
@@ -55,15 +62,30 @@ struct Vertex {
 #[repr(C)]
 struct RenderPolyCommand {
     z_index: u32,
+    rdr_attrs_idx: u32,
     color: u32,
     tex_info: u32,
     vertices: [Vertex; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct RenderingAttributes {
+    // TODO: also need gpustat
+    tpage: u32,
+    texwin: u32,
+    draw_area_x1xy1: u32,
+    draw_area_x2xy2: u32,
+    drawing_offset: u32,
+    mask: u32,
 }
 
 #[wasm_bindgen]
 pub struct GP0CommandLists {
     fill_rect_cmds: Vec<u8>,
     render_poly_cmds: Vec<u8>,
+    // transparent poly cmds Vec<u8>
+    rendering_attributes: Vec<u8>,
 }
 
 #[wasm_bindgen]
@@ -101,54 +123,136 @@ impl GP0CommandLists {
     pub fn render_poly_cmds(&self) -> js_sys::Uint8Array {
         js_sys::Uint8Array::from(self.render_poly_cmds.as_slice())
     }
+
+    // === rendering attributes
+
+    #[wasm_bindgen(getter, js_name=RenderingAttributesCount)]
+    pub fn rendering_attributes_count(&self) -> usize {
+        self.rendering_attributes.len()
+    }
+
+    #[wasm_bindgen(getter, js_name=RenderingAttributesSize)]
+    pub fn rendering_attributes_size(&self) -> usize {
+        std::mem::size_of::<RenderingAttributes>()
+    }
+
+    #[wasm_bindgen(getter, js_name=RenderingAttributess)]
+    pub fn rendering_attributes(&self) -> js_sys::Uint8Array {
+        js_sys::Uint8Array::from(self.rendering_attributes.as_slice())
+    }
 }
 
 #[wasm_bindgen(js_name=BuildGP0CommandLists)]
 pub fn build_gp0_command_lists(commands: &[u32]) -> GP0CommandLists {
     let mut fill_rect_cmd_list: Vec<FillRectCommand> = Vec::new();
     let mut render_poly_cmd_list: Vec<RenderPolyCommand> = Vec::new();
+    let mut rendering_attributes: Vec<RenderingAttributes> = Vec::new();
+    let mut current_rdr_attr: RenderingAttributes = Default::default();
+
     let mut cmd_fifo = VecDeque::from(commands.to_vec());
     let mut z_index = 1u32;
+    let mut rdr_attrs_idx = 0u32;
+    let mut reading_rdr_attrs = true;
 
     while let Some(word) = cmd_fifo.pop_front() {
-        let cmd_type = get_cmd_type(word);
-        let cmd_params = get_cmd_params(word);
+        let cmd_type = GP0CommandType::from((word >> 29) & 0b111);
+        let cmd_params = (word >> 24) & 0x1f;
 
         match cmd_type {
             GP0CommandType::Transfer => match cmd_params {
                 0x01 => {
-                    log("TODO: clear cache command");
+                    // Clear Cache
+                    warn("TODO: clear cache command");
                 }
                 0x02 => {
-                    fill_rect_cmd_list.push(build_fill_rect_command(&mut cmd_fifo, word, z_index));
+                    // Fill Rectangle in VRAM
+                    if reading_rdr_attrs {
+                        reading_rdr_attrs = false;
+                        rendering_attributes.push(current_rdr_attr);
+                        rdr_attrs_idx += 1;
+                        warn("reading DONE!");
+                    }
+                    fill_rect_cmd_list.push(build_fill_rect_command(
+                        &mut cmd_fifo,
+                        word,
+                        z_index,
+                        rdr_attrs_idx - 1,
+                    ));
                     z_index += 1;
                 }
-                _ => {}
+                _ => {
+                    warn("unknown params");
+                }
             },
             GP0CommandType::RenderPoly => {
-                let commands = build_render_poly_command(&mut cmd_fifo, word, z_index);
+                if reading_rdr_attrs {
+                    reading_rdr_attrs = false;
+                    rendering_attributes.push(current_rdr_attr);
+                    rdr_attrs_idx += 1;
+                    warn("reading DONE!");
+                }
+                let commands =
+                    build_render_poly_command(&mut cmd_fifo, word, z_index, rdr_attrs_idx - 1);
                 let len = commands.len() as u32;
                 render_poly_cmd_list.extend(commands);
                 z_index += len;
             }
-            _ => {}
+            GP0CommandType::RenderingAttribute => {
+                if !reading_rdr_attrs {
+                    reading_rdr_attrs = true;
+                    current_rdr_attr = Default::default();
+                    warn("reading START!");
+                }
+                log("record rendering attribute");
+                match cmd_params {
+                    0x01 => {
+                        // Draw Mode setting (aka "Texpage")
+                        current_rdr_attr.tpage = word;
+                    }
+                    0x02 => {
+                        // Texture Window setting
+                        current_rdr_attr.texwin = word;
+                    }
+                    0x03 => {
+                        // Set Drawing Area top left (X1,Y1)
+                        current_rdr_attr.draw_area_x1xy1 = word;
+                    }
+                    0x04 => {
+                        // Set Drawing Area bottom right (X2,Y2)
+                        current_rdr_attr.draw_area_x2xy2 = word;
+                    }
+                    0x05 => {
+                        // Set Drawing Offset (X,Y)
+                        current_rdr_attr.drawing_offset = word;
+                    }
+                    0x06 => {
+                        // Mask Bit Setting
+                        current_rdr_attr.mask = word;
+                    }
+                    _ => {
+                        warn("unknown params");
+                    }
+                }
+            }
+            _ => {
+                error(&format!("unknown command {:#08x}", word));
+            }
         }
     }
 
     GP0CommandLists {
         fill_rect_cmds: u8_vec(&fill_rect_cmd_list),
         render_poly_cmds: u8_vec(&render_poly_cmd_list),
+        rendering_attributes: u8_vec(&rendering_attributes),
     }
 }
 
-fn get_cmd_type(word: u32) -> GP0CommandType {
-    GP0CommandType::from((word >> 29) & 0b111)
-}
-fn get_cmd_params(word: u32) -> u32 {
-    (word >> 24) & 0x1f
-}
-
-fn build_fill_rect_command(fifo: &mut VecDeque<u32>, word: u32, z_index: u32) -> FillRectCommand {
+fn build_fill_rect_command(
+    fifo: &mut VecDeque<u32>,
+    word: u32,
+    z_index: u32,
+    rdr_attrs_idx: u32,
+) -> FillRectCommand {
     log("build fill rect command");
 
     let position = fifo.pop_front().unwrap();
@@ -156,6 +260,7 @@ fn build_fill_rect_command(fifo: &mut VecDeque<u32>, word: u32, z_index: u32) ->
 
     FillRectCommand {
         z_index,
+        rdr_attrs_idx,
         color: word,
         position,
         size,
@@ -166,25 +271,21 @@ fn build_render_poly_command(
     fifo: &mut VecDeque<u32>,
     word: u32,
     z_index: u32,
+    rdr_attrs_idx: u32,
 ) -> Vec<RenderPolyCommand> {
     log("build render poly command");
     let mut commands: Vec<RenderPolyCommand> = Vec::new();
+    let mut vertices: [Vertex; 4] = [Vertex::default(); 4];
 
-    let is_gouraud_shaded = |word: u32| -> bool { (word & (1 << 28)) != 0 };
-    let num_vertices = |word: u32| -> u32 {
+    let gouraud = (word & (1 << 28)) != 0;
+    let textured = (word & (1 << 26)) != 0;
+    let num_vertices: u32 = {
         if (word & (1 << 27)) == 0 {
             3
         } else {
             4
         }
     };
-    let is_textured = |word: u32| -> bool { (word & (1 << 26)) != 0 };
-
-    let num_vertices = num_vertices(word);
-    let gouraud = is_gouraud_shaded(word);
-    let textured = is_textured(word);
-
-    let mut vertices: [Vertex; 4] = [Vertex::default(); 4];
 
     for i in 0..num_vertices {
         let mut vertex: Vertex = Vertex::default();
@@ -212,6 +313,7 @@ fn build_render_poly_command(
 
     commands.push(RenderPolyCommand {
         z_index,
+        rdr_attrs_idx,
         color: word,
         tex_info,
         vertices: [vertices[0], vertices[1], vertices[2]],
@@ -220,6 +322,7 @@ fn build_render_poly_command(
     if num_vertices == 4 {
         commands.push(RenderPolyCommand {
             z_index: z_index + 1,
+            rdr_attrs_idx,
             color: word,
             tex_info,
             vertices: [vertices[1], vertices[2], vertices[3]],
