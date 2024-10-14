@@ -233,12 +233,6 @@ class GPUComputeRasterizer {
     });
   }
 
-  private BuildGpustatArray(gpustat: number) {
-    // TODO: GPUStat class helper + struct of u32 instead of raw bitfield?
-
-    return new Uint32Array([gpustat]);
-  }
-
   private InitComputeResources() {
     const module = this.device!.createShaderModule({
       label: 'compute module',
