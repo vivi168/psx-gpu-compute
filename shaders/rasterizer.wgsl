@@ -152,7 +152,10 @@ fn GetCommandModulation(word: u32) -> f32 {
 }
 
 fn GetVertexPosition(word: u32) -> vec2f {
-    return unpack2x16snorm(word) * 32767;
+    let x = i32(word & 0x7ff);
+    let y = i32((word >> 16) & 0x7ff);
+
+    return vec2f(f32(SignExtend(11, x)), f32(SignExtend(11, y)));
 }
 
 fn BarycentricCoords(v1: vec2f, v2: vec2f, v3: vec2f, p: vec2f) -> vec3f {
