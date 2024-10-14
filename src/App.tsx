@@ -72,10 +72,13 @@ async function Render(params: InitParams) {
   const {gpustat, gpuCommands, vramBuf} = params;
   const {vramViewerRef} = params.canvasRef;
 
-  const commandLists = BuildGP0CommandLists(Uint32Array.from(gpuCommands));
+  const commandLists = BuildGP0CommandLists(
+    gpustat,
+    Uint32Array.from(gpuCommands)
+  );
 
   const rasterizer = new GPUComputeRasterizer();
-  await rasterizer.Init(gpustat, commandLists, vramBuf);
+  await rasterizer.Init(commandLists, vramBuf);
 
   rasterizer.Render(vramViewerRef);
 }

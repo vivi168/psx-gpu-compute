@@ -12,6 +12,7 @@ class GPUComputeRasterizer {
     this.ctx = this.canvas.getContext('webgpu')!;
 
     this.commandListsInfo = {
+      renderingAttributesCount: 0,
       fillRectCount: 0,
       renderPolyCount: 0,
       renderLineCount: 0,
@@ -19,11 +20,7 @@ class GPUComputeRasterizer {
     };
   }
 
-  async Init(
-    gpustat: number,
-    gp0CommandLists: GP0CommandLists,
-    vramBuf: ArrayBuffer
-  ) {
+  async Init(gp0CommandLists: GP0CommandLists, vramBuf: ArrayBuffer) {
     const adapter = await navigator.gpu?.requestAdapter();
     const device = await adapter?.requestDevice();
 
@@ -43,16 +40,17 @@ class GPUComputeRasterizer {
       gp0CommandLists.RenderingAttributesCount /
       gp0CommandLists.RenderingAttributesSize;
 
-    console.log(renderingAttributesCount);
-
     this.commandListsInfo = {
       fillRectCount,
       renderPolyCount,
       renderLineCount: 0,
       renderRectCount: 0,
+      renderingAttributesCount,
     };
 
-    this.InitBuffers(gpustat, gp0CommandLists, vramBuf);
+    console.log(this.commandListsInfo);
+
+    this.InitBuffers(gp0CommandLists, vramBuf);
     this.InitComputeResources();
     this.InitRenderResources();
   }
@@ -134,24 +132,27 @@ class GPUComputeRasterizer {
     onscreenCtx.drawImage(this.canvas, 0, 0);
   }
 
-  private InitBuffers(
-    gpustat: number,
-    gp0CommandLists: GP0CommandLists,
-    vramBuf: ArrayBuffer
-  ) {
-    const gpustatArray = this.BuildGpustatArray(gpustat);
+  private InitBuffers(gp0CommandLists: GP0CommandLists, vramBuf: ArrayBuffer) {
     const vramBuf16Array = new Uint32Array(vramBuf);
 
-    // ====
+    // FIXME: filthy hack
+    const renderingAttributesArray =
+      this.commandListsInfo.renderingAttributesCount > 0
+        ? gp0CommandLists.RenderingAttributess
+        : new Uint8Array(gp0CommandLists.RenderingAttributesSize);
+    console.log(renderingAttributesArray);
 
-    // TODO struct on wgsl side
-    this.gpustatBuffer = this.device!.createBuffer({
-      label: 'gpustat uniforms buffer',
-      size: gpustatArray.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    this.renderingAttributesBuffer = this.device!.createBuffer({
+      label: 'rendering attributes storage buffer',
+      size: renderingAttributesArray.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
-    this.device!.queue.writeBuffer(this.gpustatBuffer, 0, gpustatArray);
+    this.device!.queue.writeBuffer(
+      this.renderingAttributesBuffer,
+      0,
+      renderingAttributesArray
+    );
 
     // ====
 
@@ -250,7 +251,7 @@ class GPUComputeRasterizer {
         {
           binding: 0,
           visibility: GPUShaderStage.COMPUTE,
-          buffer: {}, // gpustat uniforms buffer
+          buffer: {type: 'read-only-storage'}, // rendering attributes storage buffer
         },
         {
           binding: 1,
@@ -318,7 +319,7 @@ class GPUComputeRasterizer {
       entries: [
         {
           binding: 0,
-          resource: {buffer: this.gpustatBuffer!},
+          resource: {buffer: this.renderingAttributesBuffer!},
         },
         {
           binding: 1,
@@ -412,11 +413,11 @@ class GPUComputeRasterizer {
   private renderPolyPipeline?: GPUComputePipeline;
   private rendererPipeline?: GPURenderPipeline;
 
-  private gpustatBuffer?: GPUBuffer;
   private vramBuffer16?: GPUBuffer;
   private vramBuffer32?: GPUBuffer; // zbuf + color [zzzz|mbgr]
   private commandListsInfoBuffer?: GPUBuffer;
 
+  private renderingAttributesBuffer?: GPUBuffer;
   private fillRectCommandsBuffer?: GPUBuffer;
   private renderPolyCommandsBuffer?: GPUBuffer;
 
@@ -427,6 +428,7 @@ class GPUComputeRasterizer {
 }
 
 interface CommandListsInfo {
+  renderingAttributesCount: number;
   fillRectCount: number;
   renderPolyCount: number;
   renderLineCount: number;

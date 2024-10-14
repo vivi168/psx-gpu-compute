@@ -1,5 +1,10 @@
-struct Gpustat {
-    gpustat: u32,
+struct RenderingAttributes {
+    tpage: u32,
+    texwin: u32,
+    draw_area_x1xy1: u32,
+    draw_area_x2xy2: u32,
+    drawing_offset: u32,
+    mask: u32,
 }
 
 struct CommandListsInfo {
@@ -38,7 +43,12 @@ struct TexPageAttributes {
     // texture_disable: bool, // TODO
 }
 
-@group(0) @binding(0) var<uniform> gpustat: Gpustat;
+struct TexWindow {
+    mask: vec2u,
+    offset: vec2u,
+}
+
+@group(0) @binding(0) var<storage, read> renderingAttributes: array<RenderingAttributes>;
 @group(0) @binding(1) var<storage, read> vramBuffer16: array<u32>;
 @group(0) @binding(2) var<storage, read_write> vramBuffer32: array<atomic<u32>>;
 @group(0) @binding(3) var<uniform> commandListsInfo: CommandListsInfo;
@@ -50,7 +60,8 @@ const VRAM_HEIGHT: u32 = 512;
 
 fn FinalPixel(color: vec4f, zIndex: u32) -> u32 {
     // TODO: alpha channel (mask bit)
-    let rgb555 = u32(color.x * 31.0) | (u32(color.y * 31.0) << 5) | (u32(color.z * 31.0) << 10);
+    let c = vec4u(round(color * 31.0));
+    let rgb555 = c.x | ((c.y) << 5) | ((c.z) << 10);
 
     return rgb555 | (zIndex << 16);
 }
@@ -72,12 +83,47 @@ fn GetPixelColor(word: u32) -> vec4f {
     return vec4f(f32(r5) / 31.0, f32(g5) / 31.0, f32(b5) / 31.0, f32(a1));
 }
 
-fn GetCommandUV(word: u32) -> vec2f {
-    let uv = word & 0xffff;
-    let u = uv & 0xff;
-    let v = (uv >> 8) & 0xff;
+fn GetTexWindow(word: u32) -> TexWindow {
+    let mx = word & 0x1f;
+    let my = (word >> 5) & 0x1f;
+    let ox = (word >> 10) & 0x1f;
+    let oy = (word >> 15) & 0x1f;
 
-    return vec2f(f32(u), f32(v));
+    let mask = vec2u(mx, my);
+    let offset = vec2u(ox, oy);
+
+    return TexWindow(mask, offset);
+}
+
+fn GetDrawingArea(x1y1: u32, x2y2: u32) -> vec4u {
+    let x1 = x1y1 & 0x3ff;
+    let y1 = (x1y1 >> 10) & 0x1ff; // note: on gpu gen2 0x3ff
+
+    let x2 = x2y2 & 0x3ff;
+    let y2 = (x2y2 >> 10) & 0x1ff; // note: on gpu gen2 0x3ff
+
+    return vec4u(x1, y1, x2 + 1, y2 + 1);
+}
+
+fn SignExtend(bits: u32, value: i32) -> i32 {
+    let m = 32 - bits;
+
+    return (value << m) >> m;
+}
+
+fn GetDrawingOffset(word: u32) -> vec2f {
+    let x = i32(word & 0x7ff);
+    let y = i32((word >> 11) & 0x7ff);
+
+    return vec2f(f32(SignExtend(11, x)), f32(SignExtend(11, y)));
+}
+
+fn GetCommandUV(word: u32, twin: TexWindow) -> vec2f {
+    let u:u32 = word & 0xff;
+    let v:u32 = (word >> 8) & 0xff;
+    let uv = (vec2u(u, v) & (~(twin.mask * 8))) | ((twin.offset & twin.mask) * 8);
+
+    return vec2f(uv);
 }
 
 fn GetCommadClutPos(word: u32) -> vec2u {
@@ -166,16 +212,20 @@ fn PlotPixel1(x: u32, y: u32, c: u32) {
     atomicMax(&vramBuffer32[i], c);
 }
 
-fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, z_index: u32) {
-    let p1 = GetVertexPosition(v1.position);
-    let p2 = GetVertexPosition(v2.position);
-    let p3 = GetVertexPosition(v3.position);
+fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, z_index: u32, rdr_attrs_idx: u32) {
+    let rdr_attrs = renderingAttributes[rdr_attrs_idx];
+    let da = GetDrawingArea(rdr_attrs.draw_area_x1xy1, rdr_attrs.draw_area_x2xy2);
+    let drawing_offset = GetDrawingOffset(rdr_attrs.drawing_offset);
+
+    let p1 = GetVertexPosition(v1.position) + drawing_offset;
+    let p2 = GetVertexPosition(v2.position) + drawing_offset;
+    let p3 = GetVertexPosition(v3.position) + drawing_offset;
 
     // TODO: clip to current drawing area instead of full vram
-    let minX = max(0u, u32(min(min(p1.x, p2.x), p3.x)));
-    let minY = max(0u, u32(min(min(p1.y, p2.y), p3.y)));
-    let maxX = min(VRAM_WIDTH, u32(max(max(p1.x, p2.x), p3.x)));
-    let maxY = min(VRAM_HEIGHT, u32(max(max(p1.y, p2.y), p3.y)));
+    let minX = max(da.x, u32(min(min(p1.x, p2.x), p3.x)));
+    let minY = max(da.y, u32(min(min(p1.y, p2.y), p3.y)));
+    let maxX = min(da.z, u32(max(max(p1.x, p2.x), p3.x)));
+    let maxY = min(da.w, u32(max(max(p1.y, p2.y), p3.y)));
 
     let c = GetCommandColor(color);
 
@@ -192,23 +242,28 @@ fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, z_index: u
     }
 }
 
-fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, tex_info: u32, z_index: u32) {
+fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, tex_info: u32, z_index: u32, rdr_attrs_idx: u32) {
     // TODO: DRY
-    let p1 = GetVertexPosition(v1.position);
-    let p2 = GetVertexPosition(v2.position);
-    let p3 = GetVertexPosition(v3.position);
+    let rdr_attrs = renderingAttributes[rdr_attrs_idx];
+    let da = GetDrawingArea(rdr_attrs.draw_area_x1xy1, rdr_attrs.draw_area_x2xy2);
+    let twin = GetTexWindow(rdr_attrs.texwin);
+    let drawing_offset = GetDrawingOffset(rdr_attrs.drawing_offset);
+
+    let p1 = GetVertexPosition(v1.position) + drawing_offset;
+    let p2 = GetVertexPosition(v2.position) + drawing_offset;
+    let p3 = GetVertexPosition(v3.position) + drawing_offset;
 
     // TODO: clip to current drawing area instead of full vram
-    let minX = max(0u, u32(min(min(p1.x, p2.x), p3.x)));
-    let minY = max(0u, u32(min(min(p1.y, p2.y), p3.y)));
-    let maxX = min(VRAM_WIDTH, u32(max(max(p1.x, p2.x), p3.x)));
-    let maxY = min(VRAM_HEIGHT, u32(max(max(p1.y, p2.y), p3.y)));
+    let minX = max(da.x, u32(min(min(p1.x, p2.x), p3.x)));
+    let minY = max(da.y, u32(min(min(p1.y, p2.y), p3.y)));
+    let maxX = min(da.z, u32(max(max(p1.x, p2.x), p3.x)));
+    let maxY = min(da.w, u32(max(max(p1.y, p2.y), p3.y)));
 
     let c = GetCommandColor(color) * GetCommandModulation(color);
 
-    let uv1 = GetCommandUV(v1.uv);
-    let uv2 = GetCommandUV(v2.uv);
-    let uv3 = GetCommandUV(v3.uv);
+    let uv1 = GetCommandUV(v1.uv, twin);
+    let uv2 = GetCommandUV(v2.uv, twin);
+    let uv3 = GetCommandUV(v3.uv, twin);
 
     let clut = GetCommadClutPos(tex_info);
     let tex_base_page = GetCommandTexPageAttributes(tex_info);
@@ -229,17 +284,21 @@ fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, te
     }
 }
 
-fn RenderGouraudTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) {
+fn RenderGouraudTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32, rdr_attrs_idx: u32) {
     // TODO: DRY
-    let p1 = GetVertexPosition(v1.position);
-    let p2 = GetVertexPosition(v2.position);
-    let p3 = GetVertexPosition(v3.position);
+    let rdr_attrs = renderingAttributes[rdr_attrs_idx];
+    let da = GetDrawingArea(rdr_attrs.draw_area_x1xy1, rdr_attrs.draw_area_x2xy2);
+    let drawing_offset = GetDrawingOffset(rdr_attrs.drawing_offset);
+
+    let p1 = GetVertexPosition(v1.position) + drawing_offset;
+    let p2 = GetVertexPosition(v2.position) + drawing_offset;
+    let p3 = GetVertexPosition(v3.position) + drawing_offset;
 
     // TODO: clip to current drawing area instead of full vram
-    let minX = max(0u, u32(min(min(p1.x, p2.x), p3.x)));
-    let minY = max(0u, u32(min(min(p1.y, p2.y), p3.y)));
-    let maxX = min(VRAM_WIDTH, u32(max(max(p1.x, p2.x), p3.x)));
-    let maxY = min(VRAM_HEIGHT, u32(max(max(p1.y, p2.y), p3.y)));
+    let minX = max(da.x, u32(min(min(p1.x, p2.x), p3.x)));
+    let minY = max(da.y, u32(min(min(p1.y, p2.y), p3.y)));
+    let maxX = min(da.z, u32(max(max(p1.x, p2.x), p3.x)));
+    let maxY = min(da.w, u32(max(max(p1.y, p2.y), p3.y)));
 
     let c1 = GetCommandColor(v1.color);
     let c2 = GetCommandColor(v2.color);
@@ -260,25 +319,30 @@ fn RenderGouraudTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32) {
     }
 }
 
-fn RenderGouraudTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, tex_info: u32, z_index: u32) {
+fn RenderGouraudTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, tex_info: u32, z_index: u32, rdr_attrs_idx: u32) {
     // TODO: DRY
-    let p1 = GetVertexPosition(v1.position);
-    let p2 = GetVertexPosition(v2.position);
-    let p3 = GetVertexPosition(v3.position);
+    let rdr_attrs = renderingAttributes[rdr_attrs_idx];
+    let da = GetDrawingArea(rdr_attrs.draw_area_x1xy1, rdr_attrs.draw_area_x2xy2);
+    let twin = GetTexWindow(rdr_attrs.texwin);
+    let drawing_offset = GetDrawingOffset(rdr_attrs.drawing_offset);
+
+    let p1 = GetVertexPosition(v1.position) + drawing_offset;
+    let p2 = GetVertexPosition(v2.position) + drawing_offset;
+    let p3 = GetVertexPosition(v3.position) + drawing_offset;
 
     // TODO: clip to current drawing area instead of full vram
-    let minX = max(0u, u32(min(min(p1.x, p2.x), p3.x)));
-    let minY = max(0u, u32(min(min(p1.y, p2.y), p3.y)));
-    let maxX = min(VRAM_WIDTH, u32(max(max(p1.x, p2.x), p3.x)));
-    let maxY = min(VRAM_HEIGHT, u32(max(max(p1.y, p2.y), p3.y)));
+    let minX = max(da.x, u32(min(min(p1.x, p2.x), p3.x)));
+    let minY = max(da.y, u32(min(min(p1.y, p2.y), p3.y)));
+    let maxX = min(da.z, u32(max(max(p1.x, p2.x), p3.x)));
+    let maxY = min(da.w, u32(max(max(p1.y, p2.y), p3.y)));
 
     let c1 = GetCommandColor(v1.color);
     let c2 = GetCommandColor(v2.color);
     let c3 = GetCommandColor(v3.color);
 
-    let uv1 = GetCommandUV(v1.uv);
-    let uv2 = GetCommandUV(v2.uv);
-    let uv3 = GetCommandUV(v3.uv);
+    let uv1 = GetCommandUV(v1.uv, twin);
+    let uv2 = GetCommandUV(v2.uv, twin);
+    let uv3 = GetCommandUV(v3.uv, twin);
 
     let m = GetCommandModulation(color);
     let clut = GetCommadClutPos(tex_info);
@@ -320,15 +384,15 @@ fn RenderPoly(@builtin(global_invocation_id) gid: vec3u) {
 
     if gouraud {
         if textured {
-            RenderGouraudTexturedTriangle(v1, v2, v3, poly.color, poly.tex_info, poly.z_index);
+            RenderGouraudTexturedTriangle(v1, v2, v3, poly.color, poly.tex_info, poly.z_index, poly.rdr_attrs_idx);
         } else {
-            RenderGouraudTriangle(v1, v2, v3, poly.z_index);
+            RenderGouraudTriangle(v1, v2, v3, poly.z_index, poly.rdr_attrs_idx);
         }
     } else {
         if textured {
-            RenderFlatTexturedTriangle(v1, v2, v3, poly.color, poly.tex_info, poly.z_index);
+            RenderFlatTexturedTriangle(v1, v2, v3, poly.color, poly.tex_info, poly.z_index, poly.rdr_attrs_idx);
         } else {
-            RenderFlatTriangle(v1, v2, v3, poly.color, poly.z_index);
+            RenderFlatTriangle(v1, v2, v3, poly.color, poly.z_index, poly.rdr_attrs_idx);
         }
     }
 }

@@ -143,11 +143,12 @@ impl GP0CommandLists {
 }
 
 #[wasm_bindgen(js_name=BuildGP0CommandLists)]
-pub fn build_gp0_command_lists(commands: &[u32]) -> GP0CommandLists {
+pub fn build_gp0_command_lists(gpustat: u32, commands: &[u32]) -> GP0CommandLists {
+    log(&format!("{:08x}", gpustat));
     let mut fill_rect_cmd_list: Vec<FillRectCommand> = Vec::new();
     let mut render_poly_cmd_list: Vec<RenderPolyCommand> = Vec::new();
     let mut rendering_attributes: Vec<RenderingAttributes> = Vec::new();
-    let mut current_rdr_attr: RenderingAttributes = Default::default();
+    let mut current_rdr_attr: RenderingAttributes = Default::default(); // TODO: initial value from gpustat?
 
     let mut cmd_fifo = VecDeque::from(commands.to_vec());
     let mut z_index = 1u32;
@@ -200,7 +201,7 @@ pub fn build_gp0_command_lists(commands: &[u32]) -> GP0CommandLists {
             GP0CommandType::RenderingAttribute => {
                 if !reading_rdr_attrs {
                     reading_rdr_attrs = true;
-                    current_rdr_attr = Default::default();
+                    current_rdr_attr = rendering_attributes.last().unwrap().clone();
                     warn("reading START!");
                 }
                 log("record rendering attribute");
