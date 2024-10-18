@@ -239,7 +239,7 @@ fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, z_index: u
                 continue;
             }
 
-            PlotPixel(x, y, FinalPixel(c, z_index));
+            PlotPixel1(x, y, FinalPixel(c, z_index));
         }
     }
 }
@@ -316,7 +316,7 @@ fn RenderGouraudTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32, rdr_a
 
             let color = bc.x * c1 + bc.y * c2 + bc.z * c3;
 
-            PlotPixel(x, y, FinalPixel(color, z_index));
+            PlotPixel1(x, y, FinalPixel(color, z_index));
         }
     }
 }
