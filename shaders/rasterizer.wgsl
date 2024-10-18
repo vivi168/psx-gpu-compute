@@ -118,11 +118,11 @@ fn GetDrawingOffset(word: u32) -> vec2f {
     return vec2f(f32(SignExtend(11, x)), f32(SignExtend(11, y)));
 }
 
-fn GetCommandUV(word: u32, twin: TexWindow) -> vec2f {
+fn GetCommandUV(word: u32) -> vec2f {
     let u:u32 = word & 0xff;
     let v:u32 = (word >> 8) & 0xff;
-    let uv = (vec2u(u, v) & (~(twin.mask * 8))) | ((twin.offset & twin.mask) * 8);
 
+    let uv = vec2u(u, v);
     return vec2f(uv);
 }
 
@@ -136,7 +136,7 @@ fn GetCommadClutPos(word: u32) -> vec2u {
 
 fn GetCommandTexPageAttributes(word: u32) -> TexPageAttributes {
     let attrs = (word >> 16) & 0xffff;
-    let x = (attrs & 31) * 64;
+    let x = (attrs & 15) * 64;
     let y = ((attrs >> 4) & 1) * 256;
 
     let transparency_mode = (attrs >> 5) & 3;
@@ -171,14 +171,13 @@ fn BarycentricCoords(v1: vec2f, v2: vec2f, v3: vec2f, p: vec2f) -> vec3f {
     return vec3f(1.0 - (u.x + u.y) / u.z, u.y / u.z, u.x / u.z);
 }
 
-// TODO: wrap texture to texture page
-// TODO: repeat texture
-fn SampleTex(uv: vec2u, clut: vec2u, tex_base_page: TexPageAttributes) -> vec4f {
+fn SampleTex(uv: vec2u, clut: vec2u, tex_base_page: TexPageAttributes, twin: TexWindow) -> vec4f {
     let bpp = 4u << tex_base_page.color_mode;
     let r = 16u / bpp;
 
-    let uv2 = vec2u(uv.x / r, uv.y);
-    let xy = tex_base_page.position + uv2;
+    let uv1 = (uv & (~(twin.mask * 8))) | ((twin.offset & twin.mask) * 8);
+    let uv2 = vec2u(uv1.x / r, uv1.y);
+    let xy = (tex_base_page.position + uv2) % vec2u(VRAM_WIDTH, VRAM_HEIGHT);
     let ti = xy.y * VRAM_WIDTH + xy.x;
 
     let texel = atomicLoad(&vramBuffer32[ti]) & 0xffff;
@@ -188,7 +187,7 @@ fn SampleTex(uv: vec2u, clut: vec2u, tex_base_page: TexPageAttributes) -> vec4f 
     }
 
     let mask = (1u << bpp) - 1;
-    let index = (texel >> (uv.x % r * bpp)) & mask;
+    let index = (texel >> (uv1.x % r * bpp)) & mask;
 
     let cx = clut.x + index;
     let cy = clut.y;
@@ -264,9 +263,9 @@ fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, te
 
     let c = GetCommandColor(color) * GetCommandModulation(color);
 
-    let uv1 = GetCommandUV(v1.uv, twin);
-    let uv2 = GetCommandUV(v2.uv, twin);
-    let uv3 = GetCommandUV(v3.uv, twin);
+    let uv1 = GetCommandUV(v1.uv);
+    let uv2 = GetCommandUV(v2.uv);
+    let uv3 = GetCommandUV(v3.uv);
 
     let clut = GetCommadClutPos(tex_info);
     let tex_base_page = GetCommandTexPageAttributes(tex_info);
@@ -280,7 +279,7 @@ fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, te
             }
 
             let uv = round(bc.x * uv1 + bc.y * uv2 + bc.z * uv3);
-            let p = SampleTex(vec2u(uv), clut, tex_base_page);
+            let p = SampleTex(vec2u(uv), clut, tex_base_page, twin);
 
             PlotPixel(x, y, FinalPixel(clamp(c * p, vec4f(0), vec4f(1)) , z_index));
         }
@@ -343,9 +342,9 @@ fn RenderGouraudTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32,
     let c2 = GetCommandColor(v2.color);
     let c3 = GetCommandColor(v3.color);
 
-    let uv1 = GetCommandUV(v1.uv, twin);
-    let uv2 = GetCommandUV(v2.uv, twin);
-    let uv3 = GetCommandUV(v3.uv, twin);
+    let uv1 = GetCommandUV(v1.uv);
+    let uv2 = GetCommandUV(v2.uv);
+    let uv3 = GetCommandUV(v3.uv);
 
     let m = GetCommandModulation(color);
     let clut = GetCommadClutPos(tex_info);
@@ -362,7 +361,7 @@ fn RenderGouraudTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32,
             let c = bc.x * c1 + bc.y * c2 + bc.z * c3;
             // TODO: DRY
             let uv = round(bc.x * uv1 + bc.y * uv2 + bc.z * uv3);
-            let p = SampleTex(vec2u(uv), clut, tex_base_page);
+            let p = SampleTex(vec2u(uv), clut, tex_base_page, twin);
 
             PlotPixel(x, y, FinalPixel(clamp(c * m * p, vec4f(0), vec4f(1)) , z_index));
         }
