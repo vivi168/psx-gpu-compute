@@ -198,7 +198,7 @@ fn SampleTex(uv: vec2u, clut: vec2u, tex_base_page: TexPageAttributes, twin: Tex
     return GetPixelColor(c);
 }
 
-fn PlotPixel(x: u32, y: u32, c: u32) {
+fn PlotTexel(x: u32, y: u32, c: u32) {
     if (c & 0xffff) == 0 {
         return;
     }
@@ -208,7 +208,7 @@ fn PlotPixel(x: u32, y: u32, c: u32) {
     atomicMax(&vramBuffer32[i], c);
 }
 
-fn PlotPixel1(x: u32, y: u32, c: u32) {
+fn PlotPixel(x: u32, y: u32, c: u32) {
     let i = y * VRAM_WIDTH + x;
 
     atomicMax(&vramBuffer32[i], c);
@@ -239,7 +239,7 @@ fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, z_index: u
                 continue;
             }
 
-            PlotPixel1(x, y, FinalPixel(c, z_index));
+            PlotPixel(x, y, FinalPixel(c, z_index));
         }
     }
 }
@@ -281,7 +281,7 @@ fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, te
             let uv = round(bc.x * uv1 + bc.y * uv2 + bc.z * uv3);
             let p = SampleTex(vec2u(uv), clut, tex_base_page, twin);
 
-            PlotPixel(x, y, FinalPixel(clamp(c * p, vec4f(0), vec4f(1)) , z_index));
+            PlotTexel(x, y, FinalPixel(clamp(c * p, vec4f(0), vec4f(1)) , z_index));
         }
     }
 }
@@ -316,7 +316,7 @@ fn RenderGouraudTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32, rdr_a
 
             let color = bc.x * c1 + bc.y * c2 + bc.z * c3;
 
-            PlotPixel1(x, y, FinalPixel(color, z_index));
+            PlotPixel(x, y, FinalPixel(color, z_index));
         }
     }
 }
@@ -363,7 +363,7 @@ fn RenderGouraudTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32,
             let uv = round(bc.x * uv1 + bc.y * uv2 + bc.z * uv3);
             let p = SampleTex(vec2u(uv), clut, tex_base_page, twin);
 
-            PlotPixel(x, y, FinalPixel(clamp(c * m * p, vec4f(0), vec4f(1)) , z_index));
+            PlotTexel(x, y, FinalPixel(clamp(c * m * p, vec4f(0), vec4f(1)) , z_index));
         }
     }
 }
@@ -423,7 +423,7 @@ fn FillRect(
         for (var i = start_x; i < end_x; i = i + 1) {
 
             let pixel = FinalPixel(GetCommandColor(rect.color), rect.z_index);
-            PlotPixel1(i % 1024, j % 512, pixel);
+            PlotPixel(i % 1024, j % 512, pixel);
         }
     }
 }
