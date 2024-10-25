@@ -407,8 +407,6 @@ fn LinesIntersect(l1: vec4u, l2: vec4u) -> bool {
     return 0 <= t && t <= 1 && 0 <= u && u <= 1;
 }
 
-//fn CellTriangleOverlap(poly: RenderPolyCommand,
-
 @compute @workgroup_size(CELL_SIZE, CELL_SIZE)
 fn RenderTransparentPoly(
     @builtin(global_invocation_id) gid: vec3u,
@@ -419,98 +417,38 @@ fn RenderTransparentPoly(
     let wx = wid.x * 64;
     let wy = wid.y * 64;
 
-    // TODO: clip vram rect
     let startX = wx + lid.x * CELL_SIZE;
     let startY = wy + lid.y * CELL_SIZE;
 
     let endX = min(startX + CELL_SIZE, VRAM_WIDTH);
     let endY = min(startY + CELL_SIZE, VRAM_HEIGHT);
 
-    // let wc = vec4f(f32(wid.x) / 16, 0, f32(wid.y) / 8, 1);
-    // let lc = vec4f(f32(lid.x) / 8, 0, f32(lid.y) / 8, 1);
-    // let c = FinalPixel((wc * 2 + lc) / 3, 0x8000);
-
-    var num_poly = 0;
-
     let cell = vec4u(startX, startY, endX, endY);
-    // let te = vec4u(startX, startY, endX, startY);
-    // let be = vec4u(startX, endY, endX, endY);
-    // let le = vec4u(startX, startY, startX, endY);
-    // let re = vec4u(endX, startY, endX, endY);
 
     for (var i = 0u; i < commandListsInfo.renderTransparentPolyCount; i = i + 1) {
         let poly = renderTransparentPolyCommands[i];
+
+        let rdr_attrs = renderingAttributes[poly.rdr_attrs_idx];
+        let da = GetDrawingArea(rdr_attrs.draw_area_x1xy1, rdr_attrs.draw_area_x2xy2);
+        let drawing_offset = GetDrawingOffset(rdr_attrs.drawing_offset);
+
         let v1 = poly.vertices[0];
         let v2 = poly.vertices[1];
         let v3 = poly.vertices[2];
 
-        let rdr_attrs = renderingAttributes[poly.rdr_attrs_idx];
-        let da = GetDrawingArea(rdr_attrs.draw_area_x1xy1, rdr_attrs.draw_area_x2xy2);
-        let twin = GetTexWindow(rdr_attrs.texwin);
-        let drawing_offset = GetDrawingOffset(rdr_attrs.drawing_offset);
+        let t = GetTriangle(v1, v2, v3, cell, drawing_offset);
 
-
-        let p1 = GetVertexPosition(v1.position) + drawing_offset;
-        let p2 = GetVertexPosition(v2.position) + drawing_offset;
-        let p3 = GetVertexPosition(v3.position) + drawing_offset;
-
-        let minX = max(da.x, u32(min(min(p1.x, p2.x), p3.x)));
-        let minY = max(da.y, u32(min(min(p1.y, p2.y), p3.y)));
-        let maxX = min(da.z, u32(max(max(p1.x, p2.x), p3.x)));
-        let maxY = min(da.w, u32(max(max(p1.y, p2.y), p3.y)));
-
-        let tri_bbox = vec4u(minX, minY, maxX, maxY);
-
-        if !BBoxesOverlap(tri_bbox, cell) {
+        if !BBoxesOverlap(cell, da) {
             continue;
         }
 
-        // if !(PointInCell(vec2u(p1), cell) || PointInCell(vec2u(p2), cell) || PointInCell(vec2u(p3), cell)) {
-		// 	continue;
-        // }
-
-        num_poly += 1;
-
-        // let gouraud = (poly.color & (1 << 28)) != 0;
-        // let textured = (poly.color & (1 << 26)) != 0;
-
-        // if gouraud {
-        //     if textured {
-        //         RenderGouraudTexturedTriangle(v1, v2, v3, poly.color, poly.tex_info, poly.z_index, poly.rdr_attrs_idx);
-        //     } else {
-        //         RenderGouraudTriangle(v1, v2, v3, poly.z_index, poly.rdr_attrs_idx);
-        //     }
-        // } else {
-        //     if textured {
-        //         RenderFlatTexturedTriangle(v1, v2, v3, poly.color, poly.tex_info, poly.z_index, poly.rdr_attrs_idx);
-        //     } else {
-        //         RenderFlatTriangle(v1, v2, v3, poly.color, poly.z_index, poly.rdr_attrs_idx);
-        //     }
-        // }
-
-
-        // let ab = vec4u(p1, p2);
-        // let bc = vec4u(p2, p3);
-        // let ac = vec4u(p1, p3);
-
-        // if LinesIntersect(vec4u(p1, p2), vec4u(cell.x, cell.y)) ||
-        //    LinesIntersect(vec4u(p1, p2), vec4u(cell.x, cell.y)) ||
-        //    LinesIntersect(vec4u(p1, p2), vec4u(cell.x, cell.y)) ||
-        //    LinesIntersect(vec4u(p1, p2), vec4u(cell.x, cell.y)) ||
-    }
-
-    for (var j = startY; j < endY; j = j + 1) {
-        for (var i = startX; i < endX; i = i + 1) {
-            // let c = (lid.y << 10) | lid.x;
-
-            if num_poly > 0 {
-
-                let tint = f32 (num_poly) /  f32 (commandListsInfo.renderTransparentPolyCount);
-
-                let c = FinalPixel (vec4f (tint, 0, tint, 1), 0x8000);
-                PlotPixel (i, j, c);
-            }
+        if !BBoxesOverlap(t.bbox, cell) {
+            continue;
         }
+
+        // TODO: also check if vertices of triangle/edges of triangle intersect with cell
+
+        RenderTriangle(t, poly, rdr_attrs);
     }
 }
 
