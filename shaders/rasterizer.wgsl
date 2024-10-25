@@ -29,6 +29,15 @@ struct Vertex {
     color: u32,
 }
 
+struct Triangle {
+    p1: vec2f,
+    p2: vec2f,
+    p3: vec2f,
+    uvs: vec3u,
+    colors: vec3u,
+    bbox: vec4u,
+}
+
 struct RenderPolyCommand {
     z_index: u32,
     rdr_attrs_idx: u32,
@@ -216,26 +225,32 @@ fn PlotPixel(x: u32, y: u32, c: u32) {
     atomicMax(&vramBuffer32[i], c);
 }
 
-fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, z_index: u32, rdr_attrs_idx: u32) {
-    let rdr_attrs = renderingAttributes[rdr_attrs_idx];
-    let da = GetDrawingArea(rdr_attrs.draw_area_x1xy1, rdr_attrs.draw_area_x2xy2);
-    let drawing_offset = GetDrawingOffset(rdr_attrs.drawing_offset);
+fn GetTriangle(v1: Vertex, v2: Vertex, v3:Vertex, drawing_area:vec4u, offset:vec2f) -> Triangle {
+    let p1 = GetVertexPosition(v1.position) + offset;
+    let p2 = GetVertexPosition(v2.position) + offset;
+    let p3 = GetVertexPosition(v3.position) + offset;
 
-    let p1 = GetVertexPosition(v1.position) + drawing_offset;
-    let p2 = GetVertexPosition(v2.position) + drawing_offset;
-    let p3 = GetVertexPosition(v3.position) + drawing_offset;
+    let minX = max(drawing_area.x, u32(min(min(p1.x, p2.x), p3.x)));
+    let minY = max(drawing_area.y, u32(min(min(p1.y, p2.y), p3.y)));
+    let maxX = min(drawing_area.z, u32(max(max(p1.x, p2.x), p3.x)));
+    let maxY = min(drawing_area.w, u32(max(max(p1.y, p2.y), p3.y)));
 
-    // TODO: clip to current drawing area instead of full vram
-    let minX = max(da.x, u32(min(min(p1.x, p2.x), p3.x)));
-    let minY = max(da.y, u32(min(min(p1.y, p2.y), p3.y)));
-    let maxX = min(da.z, u32(max(max(p1.x, p2.x), p3.x)));
-    let maxY = min(da.w, u32(max(max(p1.y, p2.y), p3.y)));
+    return Triangle(
+        p1,
+        p2,
+        p3,
+        vec3u(v1.uv, v2.uv, v3.uv),
+        vec3u(v1.color, v2.color, v3.color),
+        vec4u(minX, minY, maxX, maxY)
+    );
+}
 
+fn RenderFlatTriangle(t: Triangle, color: u32, z_index: u32) {
     let c = GetCommandColor(color);
 
-    for (var y: u32 = minY; y < maxY; y = y + 1) {
-        for (var x: u32 = minX; x < maxX; x = x + 1) {
-            let bc = BarycentricCoords(p1, p2, p3, vec2f(f32(x), f32(y)));
+    for (var y: u32 = t.bbox.y; y < t.bbox.w; y = y + 1) {
+        for (var x: u32 = t.bbox.x; x < t.bbox.z; x = x + 1) {
+            let bc = BarycentricCoords(t.p1, t.p2, t.p3, vec2f(f32(x), f32(y)));
 
             if bc.x < 0.0 || bc.y < 0.0 || bc.z < 0.0 {
                 continue;
@@ -246,35 +261,19 @@ fn RenderFlatTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, z_index: u
     }
 }
 
-fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, tex_info: u32, z_index: u32, rdr_attrs_idx: u32) {
-    // TODO: DRY
-    let rdr_attrs = renderingAttributes[rdr_attrs_idx];
-    let da = GetDrawingArea(rdr_attrs.draw_area_x1xy1, rdr_attrs.draw_area_x2xy2);
-    let twin = GetTexWindow(rdr_attrs.texwin);
-    let drawing_offset = GetDrawingOffset(rdr_attrs.drawing_offset);
-
-    let p1 = GetVertexPosition(v1.position) + drawing_offset;
-    let p2 = GetVertexPosition(v2.position) + drawing_offset;
-    let p3 = GetVertexPosition(v3.position) + drawing_offset;
-
-    // TODO: clip to current drawing area instead of full vram
-    let minX = max(da.x, u32(min(min(p1.x, p2.x), p3.x)));
-    let minY = max(da.y, u32(min(min(p1.y, p2.y), p3.y)));
-    let maxX = min(da.z, u32(max(max(p1.x, p2.x), p3.x)));
-    let maxY = min(da.w, u32(max(max(p1.y, p2.y), p3.y)));
-
+fn RenderFlatTexturedTriangle(t: Triangle, color: u32, tex_info: u32, twin: TexWindow, z_index: u32) {
     let c = GetCommandColor(color) * GetCommandModulation(color);
 
-    let uv1 = GetCommandUV(v1.uv);
-    let uv2 = GetCommandUV(v2.uv);
-    let uv3 = GetCommandUV(v3.uv);
+    let uv1 = GetCommandUV(t.uvs.x);
+    let uv2 = GetCommandUV(t.uvs.y);
+    let uv3 = GetCommandUV(t.uvs.z);
 
     let clut = GetCommadClutPos(tex_info);
     let tex_base_page = GetCommandTexPageAttributes(tex_info);
 
-    for (var y: u32 = minY; y < maxY; y = y + 1) {
-        for (var x: u32 = minX; x < maxX; x = x + 1) {
-            let bc = BarycentricCoords(p1, p2, p3, vec2f(f32(x), f32(y)));
+    for (var y: u32 = t.bbox.y; y < t.bbox.w; y = y + 1) {
+        for (var x: u32 = t.bbox.x; x < t.bbox.z; x = x + 1) {
+            let bc = BarycentricCoords(t.p1, t.p2, t.p3, vec2f(f32(x), f32(y)));
 
             if bc.x < 0.0 || bc.y < 0.0 || bc.z < 0.0 {
                 continue;
@@ -288,29 +287,14 @@ fn RenderFlatTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, te
     }
 }
 
-fn RenderGouraudTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32, rdr_attrs_idx: u32) {
-    // TODO: DRY
-    let rdr_attrs = renderingAttributes[rdr_attrs_idx];
-    let da = GetDrawingArea(rdr_attrs.draw_area_x1xy1, rdr_attrs.draw_area_x2xy2);
-    let drawing_offset = GetDrawingOffset(rdr_attrs.drawing_offset);
+fn RenderGouraudTriangle(t: Triangle, z_index: u32) {
+    let c1 = GetCommandColor(t.colors.x);
+    let c2 = GetCommandColor(t.colors.y);
+    let c3 = GetCommandColor(t.colors.z);
 
-    let p1 = GetVertexPosition(v1.position) + drawing_offset;
-    let p2 = GetVertexPosition(v2.position) + drawing_offset;
-    let p3 = GetVertexPosition(v3.position) + drawing_offset;
-
-    // TODO: clip to current drawing area instead of full vram
-    let minX = max(da.x, u32(min(min(p1.x, p2.x), p3.x)));
-    let minY = max(da.y, u32(min(min(p1.y, p2.y), p3.y)));
-    let maxX = min(da.z, u32(max(max(p1.x, p2.x), p3.x)));
-    let maxY = min(da.w, u32(max(max(p1.y, p2.y), p3.y)));
-
-    let c1 = GetCommandColor(v1.color);
-    let c2 = GetCommandColor(v2.color);
-    let c3 = GetCommandColor(v3.color);
-
-    for (var y: u32 = minY; y < maxY; y = y + 1) {
-        for (var x: u32 = minX; x < maxX; x = x + 1) {
-            let bc = BarycentricCoords(p1, p2, p3, vec2f(f32(x), f32(y)));
+    for (var y: u32 = t.bbox.y; y < t.bbox.w; y = y + 1) {
+        for (var x: u32 = t.bbox.x; x < t.bbox.z; x = x + 1) {
+            let bc = BarycentricCoords(t.p1, t.p2, t.p3, vec2f(f32(x), f32(y)));
 
             if bc.x < 0.0 || bc.y < 0.0 || bc.z < 0.0 {
                 continue;
@@ -323,38 +307,22 @@ fn RenderGouraudTriangle(v1: Vertex, v2: Vertex, v3: Vertex, z_index: u32, rdr_a
     }
 }
 
-fn RenderGouraudTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32, tex_info: u32, z_index: u32, rdr_attrs_idx: u32) {
-    // TODO: DRY
-    let rdr_attrs = renderingAttributes[rdr_attrs_idx];
-    let da = GetDrawingArea(rdr_attrs.draw_area_x1xy1, rdr_attrs.draw_area_x2xy2);
-    let twin = GetTexWindow(rdr_attrs.texwin);
-    let drawing_offset = GetDrawingOffset(rdr_attrs.drawing_offset);
+fn RenderGouraudTexturedTriangle(t: Triangle, color: u32, tex_info: u32, twin: TexWindow, z_index: u32) {
+    let c1 = GetCommandColor(t.colors.x);
+    let c2 = GetCommandColor(t.colors.y);
+    let c3 = GetCommandColor(t.colors.z);
 
-    let p1 = GetVertexPosition(v1.position) + drawing_offset;
-    let p2 = GetVertexPosition(v2.position) + drawing_offset;
-    let p3 = GetVertexPosition(v3.position) + drawing_offset;
-
-    // TODO: clip to current drawing area instead of full vram
-    let minX = max(da.x, u32(min(min(p1.x, p2.x), p3.x)));
-    let minY = max(da.y, u32(min(min(p1.y, p2.y), p3.y)));
-    let maxX = min(da.z, u32(max(max(p1.x, p2.x), p3.x)));
-    let maxY = min(da.w, u32(max(max(p1.y, p2.y), p3.y)));
-
-    let c1 = GetCommandColor(v1.color);
-    let c2 = GetCommandColor(v2.color);
-    let c3 = GetCommandColor(v3.color);
-
-    let uv1 = GetCommandUV(v1.uv);
-    let uv2 = GetCommandUV(v2.uv);
-    let uv3 = GetCommandUV(v3.uv);
+    let uv1 = GetCommandUV(t.uvs.x);
+    let uv2 = GetCommandUV(t.uvs.y);
+    let uv3 = GetCommandUV(t.uvs.z);
 
     let m = GetCommandModulation(color);
     let clut = GetCommadClutPos(tex_info);
     let tex_base_page = GetCommandTexPageAttributes(tex_info);
 
-    for (var y: u32 = minY; y < maxY; y = y + 1) {
-        for (var x: u32 = minX; x < maxX; x = x + 1) {
-            let bc = BarycentricCoords(p1, p2, p3, vec2f(f32(x), f32(y)));
+    for (var y: u32 = t.bbox.y; y < t.bbox.w; y = y + 1) {
+        for (var x: u32 = t.bbox.x; x < t.bbox.z; x = x + 1) {
+            let bc = BarycentricCoords(t.p1, t.p2, t.p3, vec2f(f32(x), f32(y)));
 
             if bc.x < 0.0 || bc.y < 0.0 || bc.z < 0.0 {
                 continue;
@@ -370,6 +338,27 @@ fn RenderGouraudTexturedTriangle(v1: Vertex, v2: Vertex, v3: Vertex, color: u32,
     }
 }
 
+fn RenderTriangle(t: Triangle, poly: RenderPolyCommand, rdr_attrs: RenderingAttributes) {
+    let gouraud = (poly.color & (1 << 28)) != 0;
+    let textured = (poly.color & (1 << 26)) != 0;
+
+    if gouraud {
+        if textured {
+            let twin = GetTexWindow(rdr_attrs.texwin);
+            RenderGouraudTexturedTriangle(t, poly.color, poly.tex_info, twin, poly.z_index);
+        } else {
+            RenderGouraudTriangle(t, poly.z_index);
+        }
+    } else {
+        if textured {
+            let twin = GetTexWindow(rdr_attrs.texwin);
+            RenderFlatTexturedTriangle(t, poly.color, poly.tex_info, twin, poly.z_index);
+        } else {
+            RenderFlatTriangle(t, poly.color, poly.z_index);
+        }
+    }
+}
+
 @compute @workgroup_size(256)
 fn RenderPoly(@builtin(global_invocation_id) gid: vec3u) {
     let idx = gid.x;
@@ -379,42 +368,21 @@ fn RenderPoly(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     let poly = renderPolyCommands[idx];
+
+    let rdr_attrs = renderingAttributes[poly.rdr_attrs_idx];
+    let da = GetDrawingArea(rdr_attrs.draw_area_x1xy1, rdr_attrs.draw_area_x2xy2);
+    let drawing_offset = GetDrawingOffset(rdr_attrs.drawing_offset);
+
     let v1 = poly.vertices[0];
     let v2 = poly.vertices[1];
     let v3 = poly.vertices[2];
 
-    let gouraud = (poly.color & (1 << 28)) != 0;
-    let textured = (poly.color & (1 << 26)) != 0;
+    let t = GetTriangle(v1, v2, v3, da, drawing_offset);
 
-    if gouraud {
-        if textured {
-            RenderGouraudTexturedTriangle(v1, v2, v3, poly.color, poly.tex_info, poly.z_index, poly.rdr_attrs_idx);
-        } else {
-            RenderGouraudTriangle(v1, v2, v3, poly.z_index, poly.rdr_attrs_idx);
-        }
-    } else {
-        if textured {
-            RenderFlatTexturedTriangle(v1, v2, v3, poly.color, poly.tex_info, poly.z_index, poly.rdr_attrs_idx);
-        } else {
-            RenderFlatTriangle(v1, v2, v3, poly.color, poly.z_index, poly.rdr_attrs_idx);
-        }
-    }
+    RenderTriangle(t, poly, rdr_attrs);
 }
 
 const CELL_SIZE:u32 = 8;
-
-// fn TriangleBBox(v1: Vertex, v2: Vertex, v3:Vertex, da:vec4u, drawing_offset:vec2f) -> vec4u {
-//     let p1 = GetVertexPosition(v1.position) + drawing_offset;
-//     let p2 = GetVertexPosition(v2.position) + drawing_offset;
-//     let p3 = GetVertexPosition(v3.position) + drawing_offset;
-
-//     let minX = max(da.x, u32(min(min(p1.x, p2.x), p3.x)));
-//     let minY = max(da.y, u32(min(min(p1.y, p2.y), p3.y)));
-//     let maxX = min(da.z, u32(max(max(p1.x, p2.x), p3.x)));
-//     let maxY = min(da.w, u32(max(max(p1.y, p2.y), p3.y)));
-
-//     return vec4u(minX, minY, maxX, maxY);
-// }
 
 fn BBoxesOverlap(b1: vec4u, b2: vec4u) -> bool {
     return b1.x < b2.z && b1.z > b2.x && b1.y < b2.w && b1.w > b2.y;
