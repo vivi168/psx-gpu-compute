@@ -45,7 +45,6 @@ extern "C" {
 #[repr(C)]
 struct FillRectCommand {
     z_index: u32,
-    rdr_attrs_idx: u32,
     color: u32,
     position: u32,
     size: u32,
@@ -84,7 +83,7 @@ struct RenderingAttributes {
 pub struct GP0CommandLists {
     fill_rect_cmds: Vec<u8>,
     render_poly_cmds: Vec<u8>,
-    // transparent poly cmds Vec<u8>
+    render_transparent_poly_cmds: Vec<u8>,
     rendering_attributes: Vec<u8>,
 }
 
@@ -102,9 +101,10 @@ impl GP0CommandLists {
         std::mem::size_of::<FillRectCommand>()
     }
 
+    // TODO: combine all Vec<u8> into one big Uint8Array
     #[wasm_bindgen(getter, js_name=FillRectCommands)]
     pub fn fill_rect_cmds(&self) -> js_sys::Uint8Array {
-        js_sys::Uint8Array::from(self.fill_rect_cmds.as_slice())
+        self.fill_rect_cmds.as_slice().into()
     }
 
     // === render poly
@@ -121,7 +121,24 @@ impl GP0CommandLists {
 
     #[wasm_bindgen(getter, js_name=RenderPolyCommands)]
     pub fn render_poly_cmds(&self) -> js_sys::Uint8Array {
-        js_sys::Uint8Array::from(self.render_poly_cmds.as_slice())
+        self.render_poly_cmds.as_slice().into()
+    }
+
+    // === render poly
+
+    #[wasm_bindgen(getter, js_name=RenderTransparentPolyCommandCount)]
+    pub fn render_transparent_poly_cmd_count(&self) -> usize {
+        self.render_transparent_poly_cmds.len()
+    }
+
+    #[wasm_bindgen(getter, js_name=RenderTransparentPolyCommandSize)]
+    pub fn render_transparent_poly_cmd_size(&self) -> usize {
+        std::mem::size_of::<RenderPolyCommand>()
+    }
+
+    #[wasm_bindgen(getter, js_name=RenderTransparentPolyCommands)]
+    pub fn render_transparent_poly_cmds(&self) -> js_sys::Uint8Array {
+        self.render_transparent_poly_cmds.as_slice().into()
     }
 
     // === rendering attributes
@@ -138,7 +155,7 @@ impl GP0CommandLists {
 
     #[wasm_bindgen(getter, js_name=RenderingAttributess)]
     pub fn rendering_attributes(&self) -> js_sys::Uint8Array {
-        js_sys::Uint8Array::from(self.rendering_attributes.as_slice())
+        self.rendering_attributes.as_slice().into()
     }
 }
 
@@ -147,6 +164,7 @@ pub fn build_gp0_command_lists(gpustat: u32, commands: &[u32]) -> GP0CommandList
     log(&format!("{:08x}", gpustat));
     let mut fill_rect_cmd_list: Vec<FillRectCommand> = Vec::new();
     let mut render_poly_cmd_list: Vec<RenderPolyCommand> = Vec::new();
+    let mut render_transparent_poly_cmd_list: Vec<RenderPolyCommand> = Vec::new();
     let mut rendering_attributes: Vec<RenderingAttributes> = Vec::new();
     let mut current_rdr_attr: RenderingAttributes = Default::default(); // TODO: initial value from gpustat?
 
@@ -173,14 +191,12 @@ pub fn build_gp0_command_lists(gpustat: u32, commands: &[u32]) -> GP0CommandList
                         rdr_attrs_idx += 1;
                         warn("reading DONE!");
                     }
-                    fill_rect_cmd_list.push(build_fill_rect_command(
-                        &mut cmd_fifo,
-                        word,
-                        z_index,
-                        rdr_attrs_idx - 1,
-                    ));
+                    fill_rect_cmd_list.push(build_fill_rect_command(&mut cmd_fifo, word, z_index));
                     z_index += 1;
                 }
+                // TODO: GP0(80h) - Copy Rectangle (VRAM to VRAM)
+                // TODO: GP0(A0h) - Copy Rectangle (CPU to VRAM)
+                // TODO: GP0(C0h) - Copy Rectangle (VRAM to CPU)
                 _ => {
                     warn("unknown params");
                 }
@@ -194,8 +210,17 @@ pub fn build_gp0_command_lists(gpustat: u32, commands: &[u32]) -> GP0CommandList
                 }
                 let commands =
                     build_render_poly_command(&mut cmd_fifo, word, z_index, rdr_attrs_idx - 1);
+
+                let opaque = (commands[0].color & (1 << 25)) == 0;
                 let len = commands.len() as u32;
-                render_poly_cmd_list.extend(commands);
+
+                // TODO: also check mask setting
+                if opaque {
+                    render_poly_cmd_list.extend(commands);
+                } else {
+                    render_transparent_poly_cmd_list.extend(commands);
+                }
+
                 z_index += len;
             }
             GP0CommandType::RenderingAttribute => {
@@ -244,16 +269,12 @@ pub fn build_gp0_command_lists(gpustat: u32, commands: &[u32]) -> GP0CommandList
     GP0CommandLists {
         fill_rect_cmds: u8_vec(&fill_rect_cmd_list),
         render_poly_cmds: u8_vec(&render_poly_cmd_list),
+        render_transparent_poly_cmds: u8_vec(&render_transparent_poly_cmd_list),
         rendering_attributes: u8_vec(&rendering_attributes),
     }
 }
 
-fn build_fill_rect_command(
-    fifo: &mut VecDeque<u32>,
-    word: u32,
-    z_index: u32,
-    rdr_attrs_idx: u32,
-) -> FillRectCommand {
+fn build_fill_rect_command(fifo: &mut VecDeque<u32>, word: u32, z_index: u32) -> FillRectCommand {
     log("build fill rect command");
 
     let position = fifo.pop_front().unwrap();
@@ -261,7 +282,6 @@ fn build_fill_rect_command(
 
     FillRectCommand {
         z_index,
-        rdr_attrs_idx,
         color: word,
         position,
         size,

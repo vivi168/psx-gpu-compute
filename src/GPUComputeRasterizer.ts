@@ -15,6 +15,7 @@ class GPUComputeRasterizer {
       renderingAttributesCount: 0,
       fillRectCount: 0,
       renderPolyCount: 0,
+      renderTransparentPolyCount: 0,
       renderLineCount: 0,
       renderRectCount: 0,
     };
@@ -36,16 +37,23 @@ class GPUComputeRasterizer {
     const renderPolyCount =
       gp0CommandLists.RenderPolyCommandCount /
       gp0CommandLists.RenderPolyCommandSize;
+    const renderTransparentPolyCount =
+      gp0CommandLists.RenderTransparentPolyCommandCount /
+      gp0CommandLists.RenderTransparentPolyCommandSize;
     const renderingAttributesCount =
       gp0CommandLists.RenderingAttributesCount /
       gp0CommandLists.RenderingAttributesSize;
 
+    console.warn('OPAQUE count', renderPolyCount);
+    console.warn('TRANSPARENT count', renderTransparentPolyCount);
+
     this.commandListsInfo = {
+      renderingAttributesCount,
       fillRectCount,
       renderPolyCount,
+      renderTransparentPolyCount,
       renderLineCount: 0,
       renderRectCount: 0,
-      renderingAttributesCount,
     };
 
     console.log(this.commandListsInfo);
@@ -60,7 +68,7 @@ class GPUComputeRasterizer {
       label: 'encoder',
     });
 
-    // TODO: only do once
+    // TODO: do this on init, not render
     const initVramPass = encoder.beginComputePass({
       label: 'init vram pass',
     });
@@ -71,6 +79,7 @@ class GPUComputeRasterizer {
     initVramPass.end();
 
     // ====
+    // TODO: combine all render compute pass into a single pass
 
     if (this.commandListsInfo.fillRectCount > 0) {
       const fillRectPass = encoder.beginComputePass({
@@ -98,6 +107,21 @@ class GPUComputeRasterizer {
         Math.ceil(this.commandListsInfo.renderPolyCount / 256)
       );
       renderPolyPass.end();
+    }
+
+    // ====
+
+    if (this.commandListsInfo.renderTransparentPolyCount > 0) {
+      const renderTransparentPolyPass = encoder.beginComputePass({
+        label: 'render transparent polygon pass',
+      });
+
+      renderTransparentPolyPass.setPipeline(
+        this.renderTransparentPolyPipeline!
+      );
+      renderTransparentPolyPass.setBindGroup(0, this.rasterizerBindGroup!);
+      renderTransparentPolyPass.dispatchWorkgroups(16, 8);
+      renderTransparentPolyPass.end();
     }
 
     // ====
@@ -200,6 +224,7 @@ class GPUComputeRasterizer {
       this.commandListsInfo.renderPolyCount > 0
         ? gp0CommandLists.RenderPolyCommands
         : new Uint8Array(gp0CommandLists.RenderPolyCommandSize);
+    console.log(this.commandListsInfo.renderPolyCount);
     console.log(renderPolyCommandsArray);
 
     this.renderPolyCommandsBuffer = this.device!.createBuffer({
@@ -209,9 +234,31 @@ class GPUComputeRasterizer {
     });
 
     this.device!.queue.writeBuffer(
-      this.renderPolyCommandsBuffer,
+      this.renderPolyCommandsBuffer, // TODO: only one buffer
       0,
       renderPolyCommandsArray
+    );
+
+    // ====
+
+    // FIXME: filthy hack
+    const renderTransparentPolyCommandsArray =
+      this.commandListsInfo.renderTransparentPolyCount > 0
+        ? gp0CommandLists.RenderTransparentPolyCommands
+        : new Uint8Array(gp0CommandLists.RenderTransparentPolyCommandSize);
+    console.log(this.commandListsInfo.renderTransparentPolyCount);
+    console.log(renderTransparentPolyCommandsArray);
+
+    this.renderTransparentPolyCommandsBuffer = this.device!.createBuffer({
+      label: 'gp0 render transparent poly commands storage buffer',
+      size: renderTransparentPolyCommandsArray.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    this.device!.queue.writeBuffer(
+      this.renderTransparentPolyCommandsBuffer, // TODO: only one buffer
+      0,
+      renderTransparentPolyCommandsArray
     );
 
     // ====
@@ -272,6 +319,11 @@ class GPUComputeRasterizer {
           visibility: GPUShaderStage.COMPUTE,
           buffer: {type: 'read-only-storage'}, // gp0 render poly commands storage buffer
         },
+        {
+          binding: 6,
+          visibility: GPUShaderStage.COMPUTE,
+          buffer: {type: 'read-only-storage'}, // gp0 render transparent poly commands storage buffer
+        },
       ],
     });
 
@@ -307,6 +359,15 @@ class GPUComputeRasterizer {
       },
     });
 
+    this.renderTransparentPolyPipeline = this.device!.createComputePipeline({
+      label: 'render transparent polygon pipeline',
+      layout: pipelineLayout,
+      compute: {
+        module,
+        entryPoint: 'RenderTransparentPoly',
+      },
+    });
+
     this.rasterizerBindGroup = this.device!.createBindGroup({
       label: 'rasterizer bind group',
       layout: bindGroupLayout,
@@ -329,11 +390,15 @@ class GPUComputeRasterizer {
         },
         {
           binding: 4,
-          resource: {buffer: this.fillRectCommandsBuffer!},
+          resource: {buffer: this.fillRectCommandsBuffer!}, // TODO: only one buffer, add offset
         },
         {
           binding: 5,
-          resource: {buffer: this.renderPolyCommandsBuffer!},
+          resource: {buffer: this.renderPolyCommandsBuffer!}, // TODO: only one buffer, add offset
+        },
+        {
+          binding: 6,
+          resource: {buffer: this.renderTransparentPolyCommandsBuffer!}, // TODO: only one buffer, add offset
         },
       ],
     });
@@ -405,6 +470,7 @@ class GPUComputeRasterizer {
   private initVramPipeline?: GPUComputePipeline;
   private fillRectPipeline?: GPUComputePipeline;
   private renderPolyPipeline?: GPUComputePipeline;
+  private renderTransparentPolyPipeline?: GPUComputePipeline;
   private rendererPipeline?: GPURenderPipeline;
 
   private vramBuffer16?: GPUBuffer;
@@ -414,6 +480,7 @@ class GPUComputeRasterizer {
   private renderingAttributesBuffer?: GPUBuffer;
   private fillRectCommandsBuffer?: GPUBuffer;
   private renderPolyCommandsBuffer?: GPUBuffer;
+  private renderTransparentPolyCommandsBuffer?: GPUBuffer;
 
   private rasterizerBindGroup?: GPUBindGroup;
   private rendererBindGroup?: GPUBindGroup;
@@ -425,6 +492,7 @@ interface CommandListsInfo {
   renderingAttributesCount: number;
   fillRectCount: number;
   renderPolyCount: number;
+  renderTransparentPolyCount: number;
   renderLineCount: number;
   renderRectCount: number;
 }
