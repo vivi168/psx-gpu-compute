@@ -145,22 +145,22 @@ fn GetCommadClutPos(word: u32) -> vec2u {
     return vec2u(x, y);
 }
 
+fn GetTpageTransparencyMode(word: u32) -> u32 {
+    return (word >> 5) & 3;
+}
+
 fn GetCommandTexPageAttributes(word: u32) -> TexPageAttributes {
     let attrs = (word >> 16) & 0xffff;
     let x = (attrs & 15) * 64;
     let y = ((attrs >> 4) & 1) * 256;
 
-    let transparency_mode = (attrs >> 5) & 3;
+    let transparency_mode = GetTpageTransparencyMode(attrs);
     let color_mode = (attrs >> 7) & 3;
 
     return TexPageAttributes(vec2u(x, y), transparency_mode, color_mode);
 }
 
-fn GetCommandOpaque(word: u32) -> bool {
-    return (word & (1 << 25)) == 0;
-}
-
-fn GetCommandTransparencyMode(mode: u32) -> vec2f {
+fn GetTransparencyMode(mode: u32) -> vec2f {
     if mode == 0 {
         return vec2f(0.5, 0.5);
     } else if mode == 1 {
@@ -261,6 +261,28 @@ fn PlotPixel(x: u32, y: u32, c: u32) {
     atomicMax(&vramBuffer32[i], c);
 }
 
+fn PlotPixel2(x: u32, y: u32, c: u32, fg: vec4f, z_index: u32, opaque: bool, tmode: vec2f) {
+    let i = y * VRAM_WIDTH + x;
+
+    if opaque {
+        atomicMax(&vramBuffer32[i], c);
+        return;
+    }
+
+    let b = atomicLoad(&vramBuffer32[i]);
+
+    if c <= b {
+        return;
+    }
+
+    let bg = GetPixelColor(b);
+
+    let blend = clamp(tmode.x * bg + tmode.y * fg, vec4f(0), vec4f(1));
+    let fc = FinalPixel(blend, z_index);
+
+    atomicMax(&vramBuffer32[i], fc);
+}
+
 fn GetTriangle(v1: Vertex, v2: Vertex, v3:Vertex, drawing_area:vec4u, offset:vec2f) -> Triangle {
     let p1 = GetVertexPosition(v1.position) + offset;
     let p2 = GetVertexPosition(v2.position) + offset;
@@ -281,11 +303,8 @@ fn GetTriangle(v1: Vertex, v2: Vertex, v3:Vertex, drawing_area:vec4u, offset:vec
     );
 }
 
-fn RenderFlatTriangle(t: Triangle, color: u32, z_index: u32) {
+fn RenderFlatTriangle(t: Triangle, color: u32, z_index: u32, opaque: bool, tmode: vec2f) {
     let c = GetCommandColor(color);
-
-    let opaque = GetCommandOpaque(color);
-    // let tmode = GetCommandTransparencyMode(???); // TODO: get from rendering attributes;
 
     for (var y: u32 = t.bbox.y; y < t.bbox.w; y = y + 1) {
         for (var x: u32 = t.bbox.x; x < t.bbox.z; x = x + 1) {
@@ -295,12 +314,12 @@ fn RenderFlatTriangle(t: Triangle, color: u32, z_index: u32) {
                 continue;
             }
 
-            PlotPixel(x, y, FinalPixel(c, z_index));
+            PlotPixel2(x, y, FinalPixel(c, z_index), c, z_index, opaque, tmode);
         }
     }
 }
 
-fn RenderFlatTexturedTriangle(t: Triangle, color: u32, tex_info: u32, twin: TexWindow, z_index: u32) {
+fn RenderFlatTexturedTriangle(t: Triangle, color: u32, tex_info: u32, twin: TexWindow, z_index: u32, opaque: bool) {
     let c = GetCommandColor(color) * GetCommandModulation(color);
 
     let uv1 = GetCommandUV(t.uvs.x);
@@ -309,8 +328,7 @@ fn RenderFlatTexturedTriangle(t: Triangle, color: u32, tex_info: u32, twin: TexW
 
     let clut = GetCommadClutPos(tex_info);
     let tex_base_page = GetCommandTexPageAttributes(tex_info);
-    let opaque = GetCommandOpaque(color);
-    let tmode = GetCommandTransparencyMode(tex_base_page.transparency_mode);
+    let tmode = GetTransparencyMode(tex_base_page.transparency_mode);
 
     for (var y: u32 = t.bbox.y; y < t.bbox.w; y = y + 1) {
         for (var x: u32 = t.bbox.x; x < t.bbox.z; x = x + 1) {
@@ -329,13 +347,10 @@ fn RenderFlatTexturedTriangle(t: Triangle, color: u32, tex_info: u32, twin: TexW
     }
 }
 
-fn RenderGouraudTriangle(t: Triangle, color: u32, z_index: u32) {
+fn RenderGouraudTriangle(t: Triangle, z_index: u32, opaque: bool, tmode: vec2f) {
     let c1 = GetCommandColor(t.colors.x);
     let c2 = GetCommandColor(t.colors.y);
     let c3 = GetCommandColor(t.colors.z);
-
-    let opaque = GetCommandOpaque(color);
-    // let tmode = GetCommandTransparencyMode(???); // TODO: get from rendering attributes;
 
     for (var y: u32 = t.bbox.y; y < t.bbox.w; y = y + 1) {
         for (var x: u32 = t.bbox.x; x < t.bbox.z; x = x + 1) {
@@ -347,12 +362,12 @@ fn RenderGouraudTriangle(t: Triangle, color: u32, z_index: u32) {
 
             let color = bc.x * c1 + bc.y * c2 + bc.z * c3;
 
-            PlotPixel(x, y, FinalPixel(color, z_index));
+            PlotPixel2(x, y, FinalPixel(color, z_index), color, z_index, opaque, tmode);
         }
     }
 }
 
-fn RenderGouraudTexturedTriangle(t: Triangle, color: u32, tex_info: u32, twin: TexWindow, z_index: u32) {
+fn RenderGouraudTexturedTriangle(t: Triangle, color: u32, tex_info: u32, twin: TexWindow, z_index: u32, opaque: bool) {
     let c1 = GetCommandColor(t.colors.x);
     let c2 = GetCommandColor(t.colors.y);
     let c3 = GetCommandColor(t.colors.z);
@@ -364,8 +379,7 @@ fn RenderGouraudTexturedTriangle(t: Triangle, color: u32, tex_info: u32, twin: T
     let m = GetCommandModulation(color);
     let clut = GetCommadClutPos(tex_info);
     let tex_base_page = GetCommandTexPageAttributes(tex_info);
-    let opaque = GetCommandOpaque(color);
-    let tmode = GetCommandTransparencyMode(tex_base_page.transparency_mode);
+    let tmode = GetTransparencyMode(tex_base_page.transparency_mode);
 
     for (var y: u32 = t.bbox.y; y < t.bbox.w; y = y + 1) {
         for (var x: u32 = t.bbox.x; x < t.bbox.z; x = x + 1) {
@@ -389,20 +403,23 @@ fn RenderGouraudTexturedTriangle(t: Triangle, color: u32, tex_info: u32, twin: T
 fn RenderTriangle(t: Triangle, poly: RenderPolyCommand, rdr_attrs: RenderingAttributes) {
     let gouraud = (poly.color & (1 << 28)) != 0;
     let textured = (poly.color & (1 << 26)) != 0;
+    let opaque = (poly.color & (1 << 25)) == 0;
 
     if gouraud {
         if textured {
             let twin = GetTexWindow(rdr_attrs.texwin);
-            RenderGouraudTexturedTriangle(t, poly.color, poly.tex_info, twin, poly.z_index);
+            RenderGouraudTexturedTriangle(t, poly.color, poly.tex_info, twin, poly.z_index, opaque);
         } else {
-            RenderGouraudTriangle(t, poly.color, poly.z_index);
+            let tmode = GetTransparencyMode(GetTpageTransparencyMode(rdr_attrs.tpage));
+            RenderGouraudTriangle(t, poly.z_index, opaque, tmode);
         }
     } else {
         if textured {
             let twin = GetTexWindow(rdr_attrs.texwin);
-            RenderFlatTexturedTriangle(t, poly.color, poly.tex_info, twin, poly.z_index);
+            RenderFlatTexturedTriangle(t, poly.color, poly.tex_info, twin, poly.z_index, opaque);
         } else {
-            RenderFlatTriangle(t, poly.color, poly.z_index);
+            let tmode = GetTransparencyMode(GetTpageTransparencyMode(rdr_attrs.tpage));
+            RenderFlatTriangle(t, poly.color, poly.z_index, opaque, tmode);
         }
     }
 }
