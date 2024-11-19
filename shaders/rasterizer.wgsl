@@ -250,8 +250,17 @@ fn PlotPixel(x: u32, y: u32, c: u32) {
     atomicMax(&vramBuffer32[i], c);
 }
 
-fn TryPlotPixel(i:u32, c: u32, force_mask: bool) {
-    // TODO
+fn TryPlotPixel(i:u32, c: u32, set_mask: u32) {
+    let b = atomicLoad(&vramBuffer32[i]);
+
+    if c <= b || (b & 0x8000) != 0 {
+        return;
+    }
+
+    let nc = c | (set_mask << 15);
+
+    let r = atomicCompareExchangeWeak(&vramBuffer32[i], b, nc);
+    // TODO: should retry in case r.old_value != b;
 }
 
 fn PlotPixel2(x: u32, y: u32, fg: vec4f, z_index: u32, opaque: bool, tmode: vec2f, mask_settings: vec2u) {
@@ -260,7 +269,7 @@ fn PlotPixel2(x: u32, y: u32, fg: vec4f, z_index: u32, opaque: bool, tmode: vec2
 
     if opaque {
         if mask_settings.y == 1 {
-            TryPlotPixel(i, c, mask_settings.x == 1);
+            TryPlotPixel(i, c, mask_settings.x);
             return;
         }
 
