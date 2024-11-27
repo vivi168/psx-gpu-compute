@@ -76,12 +76,12 @@ fn FinalPixel(color: vec4f, zIndex: u32) -> u32 {
     return rgb5551 | (zIndex << 16);
 }
 
-fn GetCommandColor(word: u32) -> vec4f {
+fn GetCommandColor(word: u32) -> vec3f {
     let r = word & 0xff;
     let g = (word >> 8) & 0xff;
     let b = (word >> 16) & 0xff;
 
-    return vec4f(f32(r) / 255.0, f32(g) / 255.0, f32(b) / 255.0, 1.0);
+    return vec3f(f32(r) / 255.0, f32(g) / 255.0, f32(b) / 255.0);
 }
 
 fn GetPixelColor(word: u32) -> vec4f {
@@ -235,7 +235,7 @@ fn SampleTex(uv: vec2u, clut: vec2u, tex_base_page: TexPageAttributes, twin: Tex
 
 fn PlotTexel(x: u32, y: u32, fg: vec4f, z_index: u32, opaque: bool, tmode: vec2f, mask_settings: vec2u) {
     // black texels are ignored
-    if fg.x == 0.0 && fg.y == 0.0 && fg.z == 0 {
+    if fg.x == 0.0 && fg.y == 0.0 && fg.z == 0 && fg.w == 0 {
         return;
     }
 
@@ -250,26 +250,34 @@ fn PlotPixel(x: u32, y: u32, c: u32) {
     atomicMax(&vramBuffer32[i], c);
 }
 
-fn TryPlotPixel(i:u32, c: u32, set_mask: u32) {
+fn TryPlotPixel(i:u32, c: u32) {
     let b = atomicLoad(&vramBuffer32[i]);
 
     if c <= b || (b & 0x8000) != 0 {
         return;
     }
 
-    let nc = c | (set_mask << 15);
-
-    let r = atomicCompareExchangeWeak(&vramBuffer32[i], b, nc);
+    let r = atomicCompareExchangeWeak(&vramBuffer32[i], b, c);
     // TODO: should retry in case r.old_value != b;
 }
 
 fn PlotPixel2(x: u32, y: u32, fg: vec4f, z_index: u32, opaque: bool, tmode: vec2f, mask_settings: vec2u) {
-    let c = FinalPixel(fg, z_index);
+    var c = FinalPixel(fg, z_index);
     let i = y * VRAM_WIDTH + x;
 
     if opaque {
+        c |= (mask_settings.x << 15);
+        // TODO: ordering problem
+        /* EG:
+        E6000001
+        t1,
+        E6000002
+        t2,
+        -> t1 should not be overwritten
+        -> but if t2 is rendered first, t1 will be masked.
+        */
         if mask_settings.y == 1 {
-            TryPlotPixel(i, c, mask_settings.x);
+            TryPlotPixel(i, c);
             return;
         }
 
@@ -323,7 +331,7 @@ fn GetTriangle(v1: Vertex, v2: Vertex, v3:Vertex, drawing_area:vec4u, offset:vec
 }
 
 fn RenderFlatTriangle(t: Triangle, color: u32, z_index: u32, opaque: bool, tmode: vec2f, mask_settings: vec2u) {
-    let c = GetCommandColor(color);
+    let c = vec4f(GetCommandColor(color), 0);
 
     for (var y: u32 = t.bbox.y; y < t.bbox.w; y = y + 1) {
         for (var x: u32 = t.bbox.x; x < t.bbox.z; x = x + 1) {
@@ -359,7 +367,7 @@ fn RenderFlatTexturedTriangle(t: Triangle, color: u32, tex_info: u32, twin: TexW
 
             let uv = round(bc.x * uv1 + bc.y * uv2 + bc.z * uv3);
             let p = SampleTex(vec2u(uv), clut, tex_base_page, twin);
-            let fg = clamp(c * p, vec4f(0), vec4f(1));
+            let fg = clamp(vec4f(c, 1) * p, vec4f(0), vec4f(1));
 
             PlotTexel(x, y, fg, z_index, opaque, tmode, mask_settings);
         }
@@ -379,9 +387,9 @@ fn RenderGouraudTriangle(t: Triangle, z_index: u32, opaque: bool, tmode: vec2f, 
                 continue;
             }
 
-            let color = bc.x * c1 + bc.y * c2 + bc.z * c3;
+            let c = bc.x * c1 + bc.y * c2 + bc.z * c3;
 
-            PlotPixel2(x, y, color, z_index, opaque, tmode, mask_settings);
+            PlotPixel2(x, y, vec4f(c, 0), z_index, opaque, tmode, mask_settings);
         }
     }
 }
@@ -412,7 +420,7 @@ fn RenderGouraudTexturedTriangle(t: Triangle, color: u32, tex_info: u32, twin: T
             // TODO: DRY
             let uv = round(bc.x * uv1 + bc.y * uv2 + bc.z * uv3);
             let p = SampleTex(vec2u(uv), clut, tex_base_page, twin);
-            let fg = clamp(c * m * p, vec4f(0), vec4f(1));
+            let fg = clamp(vec4f(c, 1) * m * p, vec4f(0), vec4f(1));
 
             PlotTexel(x, y, fg, z_index, opaque, tmode, mask_settings);
         }
@@ -560,7 +568,7 @@ fn FillRect(
     for (var j = start_y; j < end_y; j = j + 1) {
         for (var i = start_x; i < end_x; i = i + 1) {
 
-            let pixel = FinalPixel(GetCommandColor(rect.color), rect.z_index);
+            let pixel = FinalPixel(vec4f(GetCommandColor(rect.color), 0), rect.z_index);
             PlotPixel(i % 1024, j % 512, pixel);
         }
     }
