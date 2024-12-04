@@ -6,6 +6,20 @@ const VRAM_WIDTH = 1024;
 const VRAM_HEIGHT = 512;
 const VRAM_SIZE = VRAM_WIDTH * VRAM_HEIGHT;
 
+enum QueryTimeStamp {
+  InitVramStart = 0,
+  InitVramEnd,
+  FillRectStart,
+  FillRectEnd,
+  RenderPolyStart,
+  RenderPolyEnd,
+  RenderPolyTransparentStart,
+  RenderPolyTransparentEnd,
+  DrawStart,
+  DrawEnd,
+  Count,
+}
+
 class GPUComputeRasterizer {
   constructor() {
     this.canvas = new OffscreenCanvas(VRAM_WIDTH, VRAM_HEIGHT);
@@ -23,7 +37,9 @@ class GPUComputeRasterizer {
 
   async Init(gp0CommandLists: GP0CommandLists, vramBuf: ArrayBuffer) {
     const adapter = await navigator.gpu?.requestAdapter();
-    const device = await adapter?.requestDevice();
+    const device = await adapter?.requestDevice({
+      requiredFeatures: ['timestamp-query'],
+    });
 
     if (!device) {
       throw Error('need a browser that supports WebGPU');
@@ -71,11 +87,17 @@ class GPUComputeRasterizer {
     // TODO: do this on init, not render
     const initVramPass = encoder.beginComputePass({
       label: 'init vram pass',
+      timestampWrites: {
+        querySet: this.querySet!,
+        beginningOfPassWriteIndex: QueryTimeStamp.InitVramStart,
+        endOfPassWriteIndex: QueryTimeStamp.InitVramEnd,
+      },
     });
 
     initVramPass.setPipeline(this.initVramPipeline!);
     initVramPass.setBindGroup(0, this.rasterizerBindGroup!);
     initVramPass.dispatchWorkgroups(VRAM_SIZE / 256 / 2);
+
     initVramPass.end();
 
     // ====
@@ -84,6 +106,11 @@ class GPUComputeRasterizer {
     if (this.commandListsInfo.fillRectCount > 0) {
       const fillRectPass = encoder.beginComputePass({
         label: 'fill rect pass',
+        timestampWrites: {
+          querySet: this.querySet!,
+          beginningOfPassWriteIndex: QueryTimeStamp.FillRectStart,
+          endOfPassWriteIndex: QueryTimeStamp.FillRectEnd,
+        },
       });
 
       fillRectPass.setPipeline(this.fillRectPipeline!);
@@ -99,6 +126,11 @@ class GPUComputeRasterizer {
     if (this.commandListsInfo.renderPolyCount > 0) {
       const renderPolyPass = encoder.beginComputePass({
         label: 'render polygon pass',
+        timestampWrites: {
+          querySet: this.querySet!,
+          beginningOfPassWriteIndex: QueryTimeStamp.RenderPolyStart,
+          endOfPassWriteIndex: QueryTimeStamp.RenderPolyEnd,
+        },
       });
 
       renderPolyPass.setPipeline(this.renderPolyPipeline!);
@@ -114,6 +146,11 @@ class GPUComputeRasterizer {
     if (this.commandListsInfo.renderTransparentPolyCount > 0) {
       const renderTransparentPolyPass = encoder.beginComputePass({
         label: 'render transparent polygon pass',
+        timestampWrites: {
+          querySet: this.querySet!,
+          beginningOfPassWriteIndex: QueryTimeStamp.RenderPolyTransparentStart,
+          endOfPassWriteIndex: QueryTimeStamp.RenderPolyTransparentEnd,
+        },
       });
 
       renderTransparentPolyPass.setPipeline(
@@ -135,12 +172,40 @@ class GPUComputeRasterizer {
           storeOp: 'store',
         },
       ],
+      timestampWrites: {
+        querySet: this.querySet!,
+        beginningOfPassWriteIndex: QueryTimeStamp.DrawStart,
+        endOfPassWriteIndex: QueryTimeStamp.DrawEnd,
+      },
     };
     const drawPass = encoder.beginRenderPass(renderPassDescriptor);
     drawPass.setPipeline(this.rendererPipeline!);
     drawPass.setBindGroup(0, this.rendererBindGroup!);
     drawPass.draw(3, 1, 0, 0);
     drawPass.end();
+
+    // ====
+
+    // Resolve timestamps in nanoseconds as a 64-bit unsigned integer into a GPUBuffer.
+    const size = QueryTimeStamp.Count * BigInt64Array.BYTES_PER_ELEMENT;
+    const resolveBuffer = this.device!.createBuffer({
+      size,
+      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+    });
+    encoder.resolveQuerySet(
+      this.querySet!,
+      0,
+      QueryTimeStamp.Count,
+      resolveBuffer,
+      0
+    );
+
+    // Read GPUBuffer memory.
+    const resultBuffer = this.device!.createBuffer({
+      size,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    encoder.copyBufferToBuffer(resolveBuffer, 0, resultBuffer, 0, size);
 
     // ====
 
@@ -154,10 +219,45 @@ class GPUComputeRasterizer {
     const onscreenCtx = onscreenCanvas.getContext('2d')!;
 
     onscreenCtx.drawImage(this.canvas, 0, 0);
+
+    // Log compute pass duration in nanoseconds.
+    resultBuffer.mapAsync(GPUMapMode.READ).then(() => {
+      const times = new BigInt64Array(resultBuffer.getMappedRange());
+      console.log(
+        `InitVram pass duration: ${Math.round(Number(times[QueryTimeStamp.InitVramEnd] - times[QueryTimeStamp.InitVramStart]) / 1000)}µs`
+      );
+      console.log(
+        `FillRect pass duration: ${Math.round(Number(times[QueryTimeStamp.FillRectEnd] - times[QueryTimeStamp.FillRectStart]) / 1000)}µs`
+      );
+      console.log(
+        `RenderPoly pass duration: ${Math.round(Number(times[QueryTimeStamp.RenderPolyEnd] - times[QueryTimeStamp.RenderPolyStart]) / 1000)}µs`
+      );
+      console.log(
+        `RenderPolyTransparent pass duration: ${Math.round(Number(times[QueryTimeStamp.RenderPolyTransparentEnd] - times[QueryTimeStamp.RenderPolyTransparentStart]) / 1000)}µs`
+      );
+      console.log(
+        `Draw pass duration: ${Math.round(Number(times[QueryTimeStamp.DrawEnd] - times[QueryTimeStamp.DrawStart]) / 1000)}µs`
+      );
+      resultBuffer.unmap();
+    });
   }
 
   private InitBuffers(gp0CommandLists: GP0CommandLists, vramBuf: ArrayBuffer) {
     const vramBuf16Array = new Uint32Array(vramBuf);
+
+    // Timestamp queries
+    this.querySet = this.device!.createQuerySet({
+      type: 'timestamp',
+      count: QueryTimeStamp.Count,
+    });
+    this.queryBuffer = this.device!.createBuffer({
+      size: 8 * QueryTimeStamp.Count,
+      usage:
+        GPUBufferUsage.QUERY_RESOLVE |
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_SRC |
+        GPUBufferUsage.COPY_DST,
+    });
 
     // FIXME: filthy hack
     const renderingAttributesArray =
@@ -481,6 +581,9 @@ class GPUComputeRasterizer {
   private fillRectCommandsBuffer?: GPUBuffer;
   private renderPolyCommandsBuffer?: GPUBuffer;
   private renderTransparentPolyCommandsBuffer?: GPUBuffer;
+
+  private querySet?: GPUQuerySet;
+  private queryBuffer?: GPUBuffer;
 
   private rasterizerBindGroup?: GPUBindGroup;
   private rendererBindGroup?: GPUBindGroup;
